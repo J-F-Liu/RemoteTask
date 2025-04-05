@@ -14,7 +14,7 @@ impl MigrationTrait for Migration {
                     .col(pk_auto(Task::Id))
                     .col(string(Task::Name))
                     .col(string(Task::Command))
-                    .col(string(Task::Output))
+                    .col(string_null(Task::Output))
                     .col(string_len(Task::Status, 1))
                     .col(date_time(Task::CreatedAt))
                     .col(date_time(Task::UpdatedAt))

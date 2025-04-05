@@ -49,7 +49,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 async fn run_task(state: State<AppState>, command: String) -> Result<Vec<u8>, String> {
-    let task = task::create_task(&state.conn, command)
+    let task = task::create_task(&state.conn, command.clone(), command)
         .await
         .map_err(|err| err.to_string())?;
     run_io_task(&task.command.unwrap()).map_err(|err| err.to_string())

@@ -5,7 +5,7 @@ month := `nu -c "date now | format date %Y-%m"`
 show:
 	@echo "Build Date: {{date}} {{month}}"
 
-build:
+build args='':
 	@echo "Building..."
-	cargo build --release
+	cargo build {{args}}
 	@echo "Done"

@@ -6,19 +6,23 @@ use sea_orm::{Set, entity::prelude::*};
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
+    pub name: String,
     pub command: String,
+    pub output: Option<String>,
     pub status: TaskStatus,
+    pub created_at: TimeDateTimeWithTimeZone,
+    pub updated_at: TimeDateTimeWithTimeZone,
 }
 
 #[derive(Clone, Debug, PartialEq, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::N(1))")]
 pub enum TaskStatus {
-    #[sea_orm(string_value = "C")]
-    Created,
+    #[sea_orm(string_value = "P")]
+    Pending,
+    #[sea_orm(string_value = "R")]
+    Running,
     #[sea_orm(string_value = "S")]
-    Started,
-    #[sea_orm(string_value = "E")]
-    Ended,
+    Success,
     #[sea_orm(string_value = "F")]
     Failed,
 }
@@ -28,10 +32,13 @@ pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}
 
-pub async fn create_task(db: &DbConn, command: String) -> Result<ActiveModel, DbErr> {
+pub async fn create_task(db: &DbConn, name: String, command: String) -> Result<ActiveModel, DbErr> {
     ActiveModel {
+        name: Set(name),
         command: Set(command),
-        status: Set(TaskStatus::Created),
+        status: Set(TaskStatus::Pending),
+        created_at: Set(TimeDateTimeWithTimeZone::now_utc()),
+        updated_at: Set(TimeDateTimeWithTimeZone::now_utc()),
         ..Default::default()
     }
     .save(db)
