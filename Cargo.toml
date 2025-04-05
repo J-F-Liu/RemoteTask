@@ -1,0 +1,18 @@
+[package]
+name = "release-system"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8.1"
+sea-orm = { version = "1.1", features = [
+    "sqlx-sqlite",
+    "runtime-tokio-rustls",
+    "macros",
+    "with-time",
+] }
+dotenvy = "0.15.7"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
