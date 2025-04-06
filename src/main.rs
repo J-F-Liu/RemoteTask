@@ -1,8 +1,9 @@
 use axum::{
     Json, Router,
-    extract::{Form, State},
+    extract::{Form, Path, State},
+    http::StatusCode,
     response::Html,
-    routing::post,
+    routing::{get, post},
 };
 use sea_orm::{Database, DatabaseConnection};
 use serde::Deserialize;
@@ -47,11 +48,12 @@ async fn main() {
     // build our application with some routes
     let app = Router::new()
         .route("/run", post(add_task))
+        .route("/list/{page}", get(list_task))
         .with_state(state);
 
     // run it
     let listener = tokio::net::TcpListener::bind(server_url).await.unwrap();
-    debug!("listening on {}", listener.local_addr().unwrap());
+    info!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -96,13 +98,32 @@ async fn run_tasks(conn: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
     Ok(())
 }
 
-#[axum::debug_handler]
-async fn add_task(state: State<AppState>, command: String) -> Result<Json<task::Model>, String> {
+async fn add_task(
+    state: State<AppState>,
+    command: String,
+) -> Result<Json<task::Model>, (StatusCode, String)> {
     let task = task::create_task(&state.conn, command.clone(), command)
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     CHECKING.store(true, Ordering::SeqCst);
     Ok(Json(task))
+}
+
+#[axum::debug_handler]
+async fn list_task(
+    state: State<AppState>,
+    Path(page): Path<u64>,
+) -> Result<Json<(Vec<task::Model>, u64)>, (StatusCode, String)> {
+    if page == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Page number must be greater than 0".to_string(),
+        ));
+    }
+    let (tasks, pages) = task::recent_tasks(&state.conn, 10, page - 1)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Ok(Json((tasks, pages)))
 }
 
 fn run_just_task(args: &str) -> std::io::Result<()> {

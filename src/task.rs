@@ -73,3 +73,16 @@ pub async fn pending_tasks(db: &DbConn) -> Result<Vec<Model>, DbErr> {
         .all(db)
         .await
 }
+
+pub async fn recent_tasks(
+    db: &DbConn,
+    page_size: u64,
+    page: u64,
+) -> Result<(Vec<Model>, u64), DbErr> {
+    let paginator = Entity::find()
+        .order_by_desc(Column::Id)
+        .paginate(db, page_size);
+    let pages = paginator.num_pages().await?;
+    let items = paginator.fetch_page(page).await?;
+    Ok((items, pages))
+}
