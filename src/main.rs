@@ -1,5 +1,5 @@
 use axum::{
-    Router,
+    Json, Router,
     extract::{Form, State},
     response::Html,
     routing::post,
@@ -8,7 +8,11 @@ use sea_orm::{Database, DatabaseConnection};
 use serde::Deserialize;
 use std::env;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::runtime::Runtime;
+use tracing::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
 mod task;
 
 #[derive(Clone)]
@@ -36,37 +40,91 @@ async fn main() {
         .await
         .expect("Database connection failed");
 
+    start_runner(conn.clone());
+
     let state = AppState { conn };
 
     // build our application with some routes
     let app = Router::new()
-        .route("/run", post(run_task))
+        .route("/run", post(add_task))
         .with_state(state);
 
     // run it
     let listener = tokio::net::TcpListener::bind(server_url).await.unwrap();
-    tracing::debug!("listening on {}", listener.local_addr().unwrap());
+    debug!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
-async fn run_task(state: State<AppState>, command: String) -> Result<Vec<u8>, String> {
+
+static RUNNING: AtomicBool = AtomicBool::new(true);
+static CHECKING: AtomicBool = AtomicBool::new(true);
+
+fn start_runner(conn: DatabaseConnection) {
+    std::thread::spawn(move || {
+        let rt = Runtime::new().unwrap();
+        while RUNNING.load(Ordering::SeqCst) {
+            if CHECKING.load(Ordering::SeqCst) {
+                rt.block_on(async {
+                    run_tasks(&conn).await.unwrap_or_else(|err| {
+                        error!("Failed to run tasks: {}", err);
+                    });
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    });
+}
+
+async fn run_tasks(conn: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
+    let tasks = task::pending_tasks(conn).await?;
+    if tasks.is_empty() {
+        CHECKING.store(false, Ordering::SeqCst);
+    }
+    for task in tasks {
+        info!("Running task: {}", task.id);
+        task::update_task(conn, task.id, task::TaskStatus::Running).await?;
+        match run_just_task(&task.command) {
+            Ok(_) => {
+                info!("Task {} completed successfully", task.id);
+                task::update_task(conn, task.id, task::TaskStatus::Success).await?;
+            }
+            Err(err) => {
+                error!("Task {} failed: {}", task.id, err);
+                task::update_task(conn, task.id, task::TaskStatus::Failed).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[axum::debug_handler]
+async fn add_task(state: State<AppState>, command: String) -> Result<Json<task::Model>, String> {
     let task = task::create_task(&state.conn, command.clone(), command)
         .await
         .map_err(|err| err.to_string())?;
-    run_io_task(&task.command.unwrap()).map_err(|err| err.to_string())
+    CHECKING.store(true, Ordering::SeqCst);
+    Ok(Json(task))
 }
 
-fn run_io_task(args: &str) -> std::io::Result<Vec<u8>> {
+fn run_just_task(args: &str) -> std::io::Result<()> {
     let items = args.split(' ').collect::<Vec<_>>();
-
     let file = std::fs::File::create("output.log")?;
     let io = Stdio::from(file.try_clone()?);
     let io2 = Stdio::from(file);
-    let output = Command::new("just")
+    let mut just = Command::new("just")
         .args(items)
         .stdout(io)
         .stderr(io2)
-        .output()?;
-    Ok(output.stdout)
+        .spawn()?;
+    let status = just.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        let message = match status.code() {
+            Some(code) => format!("Command failed, return code: {code}"),
+            None => "Command terminated by signal".to_owned(),
+        };
+        Err(std::io::Error::new(std::io::ErrorKind::Other, message))
+    }
 }
 
 async fn show_form() -> Html<&'static str> {
