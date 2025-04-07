@@ -1,0 +1,16 @@
+/* App-wide styling */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+header {
+    padding-top: var(--pico-typography-spacing-vertical);
+}
+
+fieldset {
+    margin-bottom: 0;
+}
+
+input[type=submit] {
+    margin: auto 0;
+}
