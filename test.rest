@@ -1,7 +1,7 @@
 POST http://127.0.0.1:5678/run
 Content-Type: text/plain
 
-build
+update
 
 ###
 GET http://127.0.0.1:5678/list/1

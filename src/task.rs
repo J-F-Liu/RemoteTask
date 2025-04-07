@@ -1,4 +1,4 @@
-use sea_orm::{DbConn, QueryOrder, Set, TryIntoModel, entity::prelude::*};
+use sea_orm::{DbConn, QueryOrder, Set, TryIntoModel, Unchanged, entity::prelude::*};
 use serde::Serialize;
 
 #[derive(Clone, Debug, DeriveEntityModel, Serialize)]
@@ -34,6 +34,14 @@ pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}
 
+impl Model {
+    pub fn month(&self) -> String {
+        let year = self.created_at.year();
+        let month = self.created_at.month() as u8;
+        format!("{year}-{month:02}")
+    }
+}
+
 pub async fn create_task(db: &DbConn, name: String, command: String) -> Result<Model, DbErr> {
     let now = TimeDateTimeWithTimeZone::now_utc();
     ActiveModel {
@@ -50,14 +58,13 @@ pub async fn create_task(db: &DbConn, name: String, command: String) -> Result<M
 }
 
 pub async fn update_task(db: &DbConn, id: i32, status: TaskStatus) -> Result<Model, DbErr> {
-    let task: ActiveModel = Entity::find_by_id(id)
+    let task: Model = Entity::find_by_id(id)
         .one(db)
         .await?
-        .ok_or(DbErr::Custom("Cannot find post.".to_owned()))
-        .map(Into::into)?;
+        .ok_or(DbErr::Custom("Cannot find task.".to_owned()))?;
 
     ActiveModel {
-        id: task.id,
+        id: Unchanged(task.id),
         status: Set(status),
         updated_at: Set(TimeDateTimeWithTimeZone::now_utc()),
         ..Default::default()
