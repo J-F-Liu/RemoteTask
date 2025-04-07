@@ -42,11 +42,17 @@ impl Model {
     }
 }
 
-pub async fn create_task(db: &DbConn, name: String, command: String) -> Result<Model, DbErr> {
+pub async fn create_task(
+    db: &DbConn,
+    name: String,
+    command: String,
+    output: Option<String>,
+) -> Result<Model, DbErr> {
     let now = TimeDateTimeWithTimeZone::now_utc();
     ActiveModel {
         name: Set(name),
         command: Set(command),
+        output: Set(output),
         status: Set(TaskStatus::Pending),
         created_at: Set(now),
         updated_at: Set(now),

@@ -1,7 +1,20 @@
 POST http://127.0.0.1:5678/run
-Content-Type: text/plain
+Content-Type: application/json
 
-update
+{
+    "name": "test",
+    "command": "update"
+}
+
+###
+POST http://127.0.0.1:5678/run
+Content-Type: application/json
+
+{
+    "name": "test",
+    "command": "zip flir",
+    "output": "Package/InnoProjector-flir-20250408.zip"
+}
 
 ###
 GET http://127.0.0.1:5678/list/1

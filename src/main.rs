@@ -7,9 +7,9 @@ use axum::{
 };
 use sea_orm::{Database, DatabaseConnection};
 use serde::Deserialize;
-use std::env;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::{collections::HashMap, env};
 use tokio::runtime::Runtime;
 use tracing::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -114,9 +114,16 @@ async fn run_tasks(
 
 async fn add_task(
     state: State<AppState>,
-    command: String,
+    Json(mut payload): Json<HashMap<String, String>>,
 ) -> Result<Json<task::Model>, (StatusCode, String)> {
-    let task = task::create_task(&state.conn, command.clone(), command)
+    let name = payload
+        .remove("name")
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "name is required".to_string()))?;
+    let command = payload
+        .remove("command")
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "command is required".to_string()))?;
+    let output = payload.remove("output");
+    let task = task::create_task(&state.conn, name, command, output)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     CHECKING.store(true, Ordering::SeqCst);
