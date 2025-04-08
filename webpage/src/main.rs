@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
 use serde_json::json;
+use time::OffsetDateTime;
+use web_sys::window;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const PICO_CSS: Asset = asset!("/assets/pico.min.css");
@@ -112,7 +114,7 @@ fn Form() -> Element {
 #[component]
 fn List() -> Element {
     rsx! {
-        p { "任务列表" }
+        p { "版本列表" }
         ul { class: "list",
             li { "任务 1" }
             li { "任务 2" }
@@ -126,19 +128,52 @@ async fn submit_form(data: &FormData) -> Result<(), reqwest::Error> {
     let control_card = values.get("control-card").unwrap().as_value();
     let os_type = values.get("os-type").unwrap().as_value();
     let package_type = values.get("package-type").unwrap().as_value();
-
     let command = format!("build_{os_type}_{package_type} {control_card}");
-    document::eval(&format!("console.log(\"{}\");", command));
 
+    let mut name = String::new();
+    name.push_str("A4");
+    if control_card.as_str() == "hushu_dtk" {
+        name.push_str("+");
+    }
+    name.push_str("、");
+    name.push_str(&os_type);
+    name.push_str("、");
+    name.push_str(match package_type.as_str() {
+        "setup" => "安装包",
+        _ => "压缩包",
+    });
+
+    let now = OffsetDateTime::now_utc();
+    let (year, month, day) = (now.year(), now.month() as u8, now.day());
+    let card_type = match control_card.as_str() {
+        "hushu_dtk" => "-N",
+        _ => "",
+    };
+    let package_type = match package_type.as_str() {
+        "setup" => "-Setup",
+        _ => "",
+    };
+    let os_type = match os_type.as_str() {
+        "Win10" => "-Win10",
+        _ => "",
+    };
+    let output = format!(
+        "Package/{year}-{month:02}/InnoProjector{package_type}{os_type}-{year}{month:02}{day:02}{card_type}.zip"
+    );
+    // document::eval(&format!("console.log(\"{}\");", output));
+
+    let origin = window().unwrap().location().origin().unwrap();
     let client = reqwest::Client::new();
-    let response = client
-        .post("http://127.0.0.1:8080/run")
+    let _res = client
+        .post(format!("{}/run", origin))
         .json(&json!({
-           "name": "Build InnoProjector",
+           "name": name,
            "command": command,
-           "output": "output.txt",
+           "output": output,
         }))
         .send()
+        .await?
+        .text()
         .await?;
     Ok(())
 }
