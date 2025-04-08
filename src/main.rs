@@ -1,15 +1,17 @@
+use anyhow::Context;
 use axum::{
     Json, Router,
-    extract::{Form, Path, State},
+    extract::{Path, State},
     http::StatusCode,
-    response::Html,
     routing::{get, post},
 };
 use sea_orm::{Database, DatabaseConnection};
-use serde::Deserialize;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashMap, env};
+use std::{
+    process::{Command, Stdio},
+    thread::JoinHandle,
+};
 use tokio::runtime::Runtime;
 use tracing::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -22,7 +24,7 @@ struct AppState {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let db_url = env::var("DATABASE_URL").unwrap_or("sqlite:./tasks.db?mode=rwc".to_string());
     let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
@@ -46,25 +48,40 @@ async fn main() {
         .await
         .expect("Database connection failed");
 
-    start_runner(conn.clone(), work_dir);
+    let runner = start_runner(conn.clone(), work_dir);
 
     let state = AppState { conn };
 
     // build our application with some routes
-    let app = Router::new()
+    let router = Router::new()
         .route("/run", post(add_task))
         .route("/list/{page}", get(list_task))
         .with_state(state);
 
     // run it
-    let listener = tokio::net::TcpListener::bind(server_url).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(server_url)
+        .await
+        .context("failed to bind TCP listener")?;
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown_signal(runner))
+        .await
+        .context("axum::serve failed")?;
+    Ok(())
+}
+
+async fn shutdown_signal(runner: JoinHandle<()>) {
+    // 监听 Ctrl+C 信号
+    tokio::signal::ctrl_c().await.expect("Listen for Ctrl+C");
+
+    info!("Shutdown server...");
+    RUNNING.store(false, Ordering::SeqCst);
+    runner.join().expect("Terminate runner");
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 static CHECKING: AtomicBool = AtomicBool::new(true);
 
-fn start_runner(conn: DatabaseConnection, work_dir: std::path::PathBuf) {
+fn start_runner(conn: DatabaseConnection, work_dir: std::path::PathBuf) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
         while RUNNING.load(Ordering::SeqCst) {
@@ -77,7 +94,7 @@ fn start_runner(conn: DatabaseConnection, work_dir: std::path::PathBuf) {
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
-    });
+    })
 }
 
 async fn run_tasks(
@@ -185,41 +202,4 @@ fn run_just_task(
         };
         Err(std::io::Error::new(std::io::ErrorKind::Other, message))
     }
-}
-
-async fn show_form() -> Html<&'static str> {
-    Html(
-        r#"
-        <!doctype html>
-        <html>
-            <head></head>
-            <body>
-                <form action="/" method="post">
-                    <label for="name">
-                        Enter your name:
-                        <input type="text" name="name">
-                    </label>
-
-                    <label>
-                        Enter your email:
-                        <input type="text" name="email">
-                    </label>
-
-                    <input type="submit" value="Subscribe!">
-                </form>
-            </body>
-        </html>
-        "#,
-    )
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(dead_code)]
-struct Input {
-    name: String,
-    email: String,
-}
-
-async fn accept_form(Form(input): Form<Input>) {
-    dbg!(&input);
 }
