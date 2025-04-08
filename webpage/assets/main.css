@@ -14,3 +14,11 @@ fieldset {
 input[type=submit] {
     margin: auto 0;
 }
+
+thead th {
+    white-space: nowrap;
+}
+
+button.secondary {
+    padding: 2px 20px;
+}

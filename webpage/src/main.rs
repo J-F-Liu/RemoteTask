@@ -7,6 +7,8 @@ const FAVICON: Asset = asset!("/assets/favicon.ico");
 const PICO_CSS: Asset = asset!("/assets/pico.min.css");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
+mod task;
+
 fn main() {
     dioxus::launch(App);
 }
@@ -113,13 +115,86 @@ fn Form() -> Element {
 
 #[component]
 fn List() -> Element {
-    rsx! {
-        p { "版本列表" }
-        ul { class: "list",
-            li { "任务 1" }
-            li { "任务 2" }
-            li { "任务 3" }
-        }
+    let page = use_signal(|| 1);
+    let mut resource = use_resource(move || async move {
+        let origin = window().unwrap().location().origin().unwrap();
+        let client = reqwest::Client::new();
+        client
+            .get(format!("{}/list/{}", origin, page()))
+            .send()
+            .await
+            .unwrap()
+            .json::<(Vec<task::Task>, i32)>()
+            .await
+    });
+
+    match &*resource.read_unchecked() {
+        Some(Ok((tasks, _pages))) => rsx! {
+            p { "版本列表" }
+            table { class: "striped",
+                thead {
+                    tr {
+                        th { "编号" }
+                        th { "版本类型" }
+                        th { "下载" }
+                        th { "状态" }
+                        th { "" }
+                    }
+                }
+                tbody {
+                    for (id , task) in task::enumerate_tasks(tasks) {
+                        tr { key: id,
+                            td { "{task.id}" }
+                            td { "{task.name}" }
+                            td {
+                                if let Some(output) = &task.output {
+                                    a { href: "/{output}",
+                                        if let Some((_, filename)) = output.rsplit_once('/') {
+                                            "{filename}"
+                                        } else {
+                                            "{output}"
+                                        }
+                                    }
+                                }
+                            }
+                            td { "{task.status_emoji()}" }
+                            td {
+                                if task.status == "Pending" {
+                                    button {
+                                        class: "secondary",
+                                        onclick: move |_| async move {
+                                            let origin = window().unwrap().location().origin().unwrap();
+                                            let client = reqwest::Client::new();
+                                            client.post(format!("{}/cancel_task/{}", origin, id)).send().await.unwrap();
+                                            resource.restart();
+                                        },
+                                        "取消"
+                                    }
+                                } else if task.status == "Failed" {
+                                    button {
+                                        class: "secondary",
+                                        onclick: move |_| async move {
+                                            let origin = window().unwrap().location().origin().unwrap();
+                                            let client = reqwest::Client::new();
+                                            client.post(format!("{}/restart_task/{}", origin, id)).send().await.unwrap();
+                                            resource.restart();
+                                        },
+                                        "重启"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            button { onclick: move |_| resource.restart(), "刷新列表" }
+        },
+        Some(Err(err)) => rsx! {
+            div { "Loading tasks failed: {err}" }
+        },
+        None => rsx! {
+            div { "Loading tasks..." }
+        },
     }
 }
 
