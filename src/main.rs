@@ -13,6 +13,7 @@ use std::{
     thread::JoinHandle,
 };
 use tokio::runtime::Runtime;
+use tower_http::services::ServeDir;
 use tracing::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -32,6 +33,10 @@ async fn main() -> anyhow::Result<()> {
     let work_dir = env::var("WORK_DIR")
         .map(|dir| std::path::PathBuf::from(dir))
         .unwrap_or(env::current_dir().unwrap());
+    let output_dir = env::var("OUTPUT_DIR")
+        .map(|dir| std::path::PathBuf::from(dir))
+        .unwrap_or(work_dir.clone());
+    let logs_dir = work_dir.join("logs");
     let server_url = format!("{host}:{port}");
 
     tracing_subscriber::registry()
@@ -48,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Database connection failed");
 
-    let runner = start_runner(conn.clone(), work_dir);
+    let runner = start_runner(conn.clone(), work_dir, output_dir.clone());
 
     let state = AppState { conn };
 
@@ -59,6 +64,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/reset/{id}", post(reset_task))
         .route("/list/{page}", get(list_task))
         .with_state(state)
+        .nest_service("/logs", ServeDir::new(logs_dir))
+        .nest_service("/package", ServeDir::new(output_dir))
+        .fallback_service(
+            ServeDir::new("webpage/target/dx/webpage/release/web/public").precompressed_br(),
+        );
+    // .fallback_service(ServeDir::new("assets").precompressed_br());
 
     // run it
     let listener = tokio::net::TcpListener::bind(server_url)
@@ -83,15 +94,21 @@ async fn shutdown_signal(runner: JoinHandle<()>) {
 static RUNNING: AtomicBool = AtomicBool::new(true);
 static CHECKING: AtomicBool = AtomicBool::new(true);
 
-fn start_runner(conn: DatabaseConnection, work_dir: std::path::PathBuf) -> JoinHandle<()> {
+fn start_runner(
+    conn: DatabaseConnection,
+    work_dir: std::path::PathBuf,
+    output_dir: std::path::PathBuf,
+) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
         while RUNNING.load(Ordering::SeqCst) {
             if CHECKING.load(Ordering::SeqCst) {
                 rt.block_on(async {
-                    run_tasks(&conn, &work_dir).await.unwrap_or_else(|err| {
-                        error!("Failed to run tasks: {}", err);
-                    });
+                    run_tasks(&conn, &work_dir, &output_dir)
+                        .await
+                        .unwrap_or_else(|err| {
+                            error!("Failed to run tasks: {}", err);
+                        });
                 });
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
@@ -102,6 +119,7 @@ fn start_runner(conn: DatabaseConnection, work_dir: std::path::PathBuf) -> JoinH
 async fn run_tasks(
     conn: &DatabaseConnection,
     work_dir: &std::path::Path,
+    output_dir: &std::path::Path,
 ) -> Result<(), sea_orm::DbErr> {
     let tasks = task::pending_tasks(conn).await?;
     if tasks.is_empty() {
@@ -116,7 +134,7 @@ async fn run_tasks(
                 .unwrap_or_else(|err| error!("Failed to create log directory: {}", err));
         }
         let log_file = log_dir.join(format!("{}.log", task.id));
-        let output_file = task.output.map(|path| work_dir.join(path));
+        let output_file = task.output.map(|path| output_dir.join(path));
         match run_just_task(&task.command, work_dir, &log_file, output_file.as_ref()) {
             Ok(_) => {
                 info!("Task {} completed successfully", task.id);

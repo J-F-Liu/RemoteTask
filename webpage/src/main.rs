@@ -145,12 +145,16 @@ fn List() -> Element {
                     tbody {
                         for (id , task) in task::enumerate_tasks(tasks) {
                             tr { key: id,
-                                td { "{task.id}" }
+                                td {
+                                    a { href: "/logs/{task.month()}/{task.id}.log",
+                                        "{task.id}"
+                                    }
+                                }
                                 td { "{task.name}" }
                                 td {
                                     if let Some(output) = &task.output {
                                         if task.status == "Success" {
-                                            a { href: "/{output}", "{task.filename()}" }
+                                            a { href: "/package/{output}", "{task.filename()}" }
                                         } else {
                                             "{task.filename()}"
                                         }
@@ -266,7 +270,7 @@ async fn submit_form(data: &FormData) -> Result<(), reqwest::Error> {
         _ => "",
     };
     let output = format!(
-        "Package/{year}-{month:02}/InnoProjector{package_type}{os_type}-{year}{month:02}{day:02}{card_type}.zip"
+        "{year}-{month:02}/InnoProjector{package_type}{os_type}-{year}{month:02}{day:02}{card_type}.zip"
     );
     // document::eval(&format!("console.log(\"{}\");", output));
 
