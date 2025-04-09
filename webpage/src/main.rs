@@ -67,7 +67,7 @@ fn Form() -> Element {
                     r#type: "radio",
                     name: "control-card",
                     id: "A4plus",
-                    value: "hushu_dtk",
+                    value: "hashu_dtk",
                 }
                 label { r#for: "A4plus", "A4 + 串口" }
             }
@@ -115,7 +115,7 @@ fn Form() -> Element {
 
 #[component]
 fn List() -> Element {
-    let page = use_signal(|| 1);
+    let mut page = use_signal(|| 1);
     let mut resource = use_resource(move || async move {
         let origin = window().unwrap().location().origin().unwrap();
         let client = reqwest::Client::new();
@@ -129,65 +129,94 @@ fn List() -> Element {
     });
 
     match &*resource.read_unchecked() {
-        Some(Ok((tasks, _pages))) => rsx! {
-            p { "版本列表" }
-            table { class: "striped",
-                thead {
-                    tr {
-                        th { "编号" }
-                        th { "版本类型" }
-                        th { "下载" }
-                        th { "状态" }
-                        th { "" }
+        Some(Ok((tasks, pages))) => rsx! {
+            details { open: true,
+                summary { "版本列表" }
+                table { class: "striped",
+                    thead {
+                        tr {
+                            th { "编号" }
+                            th { "版本类型" }
+                            th { "下载" }
+                            th { "状态" }
+                            th { "" }
+                        }
                     }
-                }
-                tbody {
-                    for (id , task) in task::enumerate_tasks(tasks) {
-                        tr { key: id,
-                            td { "{task.id}" }
-                            td { "{task.name}" }
-                            td {
-                                if let Some(output) = &task.output {
-                                    a { href: "/{output}",
-                                        if let Some((_, filename)) = output.rsplit_once('/') {
-                                            "{filename}"
+                    tbody {
+                        for (id , task) in task::enumerate_tasks(tasks) {
+                            tr { key: id,
+                                td { "{task.id}" }
+                                td { "{task.name}" }
+                                td {
+                                    if let Some(output) = &task.output {
+                                        if task.status == "Success" {
+                                            a { href: "/{output}", "{task.filename()}" }
                                         } else {
-                                            "{output}"
+                                            "{task.filename()}"
                                         }
                                     }
                                 }
-                            }
-                            td { "{task.status_emoji()}" }
-                            td {
-                                if task.status == "Pending" {
-                                    button {
-                                        class: "secondary",
-                                        onclick: move |_| async move {
-                                            let origin = window().unwrap().location().origin().unwrap();
-                                            let client = reqwest::Client::new();
-                                            client.post(format!("{}/cancel_task/{}", origin, id)).send().await.unwrap();
-                                            resource.restart();
-                                        },
-                                        "取消"
-                                    }
-                                } else if task.status == "Failed" {
-                                    button {
-                                        class: "secondary",
-                                        onclick: move |_| async move {
-                                            let origin = window().unwrap().location().origin().unwrap();
-                                            let client = reqwest::Client::new();
-                                            client.post(format!("{}/restart_task/{}", origin, id)).send().await.unwrap();
-                                            resource.restart();
-                                        },
-                                        "重启"
+                                td { "{task.status_emoji()}" }
+                                td {
+                                    if task.status == "Pending" {
+                                        button {
+                                            class: "outline secondary",
+                                            onclick: move |_| async move {
+                                                let origin = window().unwrap().location().origin().unwrap();
+                                                let client = reqwest::Client::new();
+                                                client.post(format!("{}/cancel_task/{}", origin, id)).send().await.unwrap();
+                                                resource.restart();
+                                            },
+                                            "取消"
+                                        }
+                                    } else if task.status == "Failed" {
+                                        button {
+                                            class: "outline secondary",
+                                            onclick: move |_| async move {
+                                                let origin = window().unwrap().location().origin().unwrap();
+                                                let client = reqwest::Client::new();
+                                                client.post(format!("{}/restart_task/{}", origin, id)).send().await.unwrap();
+                                                resource.restart();
+                                            },
+                                            "运行"
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+                nav {
+                    ul {
+                        li {
+                            button {
+                                class: "secondary",
+                                onclick: move |_| resource.restart(),
+                                "刷新列表"
+                            }
+                        }
+                    }
+                    ul {
+                        li {
+                            button {
+                                class: "outline secondary contrast",
+                                onclick: move |_| page.set(page() - 1),
+                                disabled: page() == 1,
+                                "上一页"
+                            }
+                        }
+                        span { "第 {page()} 页" }
+                        li {
+                            button {
+                                class: "outline secondary contrast",
+                                onclick: move |_| page.set(page() + 1),
+                                disabled: page() == *pages,
+                                "下一页"
+                            }
+                        }
+                    }
+                }
             }
-            button { onclick: move |_| resource.restart(), "刷新列表" }
         },
         Some(Err(err)) => rsx! {
             div { "Loading tasks failed: {err}" }
@@ -203,11 +232,15 @@ async fn submit_form(data: &FormData) -> Result<(), reqwest::Error> {
     let control_card = values.get("control-card").unwrap().as_value();
     let os_type = values.get("os-type").unwrap().as_value();
     let package_type = values.get("package-type").unwrap().as_value();
-    let command = format!("build_{os_type}_{package_type} {control_card}");
+    let command = if control_card.is_empty() {
+        format!("build_{os_type}_{package_type}")
+    } else {
+        format!("build_{os_type}_{package_type} {control_card}")
+    };
 
     let mut name = String::new();
     name.push_str("A4");
-    if control_card.as_str() == "hushu_dtk" {
+    if control_card.as_str() == "hashu_dtk" {
         name.push_str("+");
     }
     name.push_str("、");
@@ -221,7 +254,7 @@ async fn submit_form(data: &FormData) -> Result<(), reqwest::Error> {
     let now = OffsetDateTime::now_utc();
     let (year, month, day) = (now.year(), now.month() as u8, now.day());
     let card_type = match control_card.as_str() {
-        "hushu_dtk" => "-N",
+        "hashu_dtk" => "-N",
         _ => "",
     };
     let package_type = match package_type.as_str() {

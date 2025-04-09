@@ -1,4 +1,8 @@
 /* App-wide styling */
+html {
+    background-color: #f6fbff;
+}
+
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
@@ -17,6 +21,11 @@ input[type=submit] {
 
 thead th {
     white-space: nowrap;
+}
+
+table {
+    margin-bottom: 0;
+    border: solid #d5d5d5 1px;
 }
 
 button.secondary {

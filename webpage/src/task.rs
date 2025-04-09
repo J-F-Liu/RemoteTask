@@ -27,6 +27,17 @@ impl Task {
             _ => "❓",
         }
     }
+
+    pub fn filename(&self) -> &str {
+        if let Some(output) = &self.output {
+            if let Some((_, filename)) = output.rsplit_once('/') {
+                return filename;
+            } else {
+                return output;
+            }
+        }
+        ""
+    }
 }
 
 pub fn enumerate_tasks(tasks: &[Task]) -> impl Iterator<Item = (i32, &Task)> {
