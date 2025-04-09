@@ -55,8 +55,10 @@ async fn main() -> anyhow::Result<()> {
     // build our application with some routes
     let router = Router::new()
         .route("/run", post(add_task))
+        .route("/cancel/{id}", post(cancel_task))
+        .route("/reset/{id}", post(reset_task))
         .route("/list/{page}", get(list_task))
-        .with_state(state);
+        .with_state(state)
 
     // run it
     let listener = tokio::net::TcpListener::bind(server_url)
@@ -148,6 +150,27 @@ async fn add_task(
 }
 
 #[axum::debug_handler]
+async fn cancel_task(
+    state: State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<String, (StatusCode, String)> {
+    task::delete_task(&state.conn, id)
+        .await
+        .map(|value| value.to_string())
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+async fn reset_task(
+    state: State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<task::Model>, (StatusCode, String)> {
+    let task = task::update_task(&state.conn, id, task::TaskStatus::Pending)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    CHECKING.store(true, Ordering::SeqCst);
+    Ok(Json(task))
+}
+
 async fn list_task(
     state: State<AppState>,
     Path(page): Path<u64>,

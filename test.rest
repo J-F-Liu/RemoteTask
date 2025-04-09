@@ -17,4 +17,10 @@ Content-Type: application/json
 }
 
 ###
+POST http://127.0.0.1:5678/reset/37
+
+###
+POST http://127.0.0.1:5678/cancel/27
+
+###
 GET http://127.0.0.1:5678/list/1

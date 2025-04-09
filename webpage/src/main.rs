@@ -164,7 +164,7 @@ fn List() -> Element {
                                             onclick: move |_| async move {
                                                 let origin = window().unwrap().location().origin().unwrap();
                                                 let client = reqwest::Client::new();
-                                                client.post(format!("{}/cancel_task/{}", origin, id)).send().await.unwrap();
+                                                client.post(format!("{}/cancel/{}", origin, id)).send().await.unwrap();
                                                 resource.restart();
                                             },
                                             "取消"
@@ -175,7 +175,7 @@ fn List() -> Element {
                                             onclick: move |_| async move {
                                                 let origin = window().unwrap().location().origin().unwrap();
                                                 let client = reqwest::Client::new();
-                                                client.post(format!("{}/restart_task/{}", origin, id)).send().await.unwrap();
+                                                client.post(format!("{}/reset/{}", origin, id)).send().await.unwrap();
                                                 resource.restart();
                                             },
                                             "运行"

@@ -79,6 +79,16 @@ pub async fn update_task(db: &DbConn, id: i32, status: TaskStatus) -> Result<Mod
     .await
 }
 
+pub async fn delete_task(db: &DbConn, id: i32) -> Result<bool, DbErr> {
+    ActiveModel {
+        id: Set(id), // The primary key must be set
+        ..Default::default()
+    }
+    .delete(db)
+    .await
+    .map(|m| m.rows_affected == 1)
+}
+
 pub async fn pending_tasks(db: &DbConn) -> Result<Vec<Model>, DbErr> {
     Entity::find()
         .filter(Column::Status.eq(TaskStatus::Pending))
