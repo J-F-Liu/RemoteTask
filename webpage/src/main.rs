@@ -34,22 +34,39 @@ fn Head() -> Element {
 
 #[component]
 fn Main() -> Element {
+    let page = use_signal(|| 1);
+    let resource = use_resource(move || async move {
+        let origin = window().unwrap().location().origin().unwrap();
+        let client = reqwest::Client::new();
+        client
+            .get(format!("{}/list/{}", origin, page()))
+            .send()
+            .await
+            .unwrap()
+            .json::<(Vec<task::Task>, i32)>()
+            .await
+    });
     rsx! {
         main { class: "container",
-            Form {}
-            List {}
+            Form { page, resource }
+            List { page, resource }
         }
     }
 }
 
 #[component]
-fn Form() -> Element {
+fn Form(
+    page: Signal<i32>,
+    resource: Resource<Result<(Vec<task::Task>, i32), reqwest::Error>>,
+) -> Element {
     rsx! {
         form {
             class: "grid",
-            onsubmit: move |evt| {
+            onsubmit: move |evt| async move {
                 evt.stop_propagation();
-                spawn(async move { submit_form(&evt.data).await.unwrap() });
+                submit_form(&evt.data).await.unwrap();
+                page.set(1);
+                resource.restart();
             },
             fieldset {
                 legend { "控制卡型号" }
@@ -112,20 +129,10 @@ fn Form() -> Element {
 }
 
 #[component]
-fn List() -> Element {
-    let mut page = use_signal(|| 1);
-    let mut resource = use_resource(move || async move {
-        let origin = window().unwrap().location().origin().unwrap();
-        let client = reqwest::Client::new();
-        client
-            .get(format!("{}/list/{}", origin, page()))
-            .send()
-            .await
-            .unwrap()
-            .json::<(Vec<task::Task>, i32)>()
-            .await
-    });
-
+fn List(
+    page: Signal<i32>,
+    resource: Resource<Result<(Vec<task::Task>, i32), reqwest::Error>>,
+) -> Element {
     match &*resource.read_unchecked() {
         Some(Ok((tasks, pages))) => rsx! {
             details { open: true,
