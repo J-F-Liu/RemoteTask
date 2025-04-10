@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use time::OffsetDateTime;
 
 #[derive(Deserialize)]
 pub struct Task {
@@ -13,9 +14,11 @@ pub struct Task {
 
 impl Task {
     pub fn month(&self) -> String {
-        let year = self.created_at[..4].parse::<i32>().unwrap();
-        let month = self.created_at[5..7].parse::<u8>().unwrap();
-        format!("{year}-{month:02}")
+        self.created_at[..7].to_string()
+    }
+
+    pub fn date(&self) -> String {
+        self.created_at[..10].to_string()
     }
 
     pub fn status_emoji(&self) -> &'static str {
@@ -38,9 +41,18 @@ impl Task {
         }
         ""
     }
+
+    pub fn can_rerun(&self) -> bool {
+        today() == self.date()
+    }
 }
 
 pub fn enumerate_tasks(tasks: &[Task]) -> impl Iterator<Item = (i32, &Task)> {
     let ids = tasks.iter().map(|task| task.id).collect::<Vec<_>>();
     ids.into_iter().zip(tasks.iter())
+}
+
+pub fn today() -> String {
+    let now = OffsetDateTime::now_utc();
+    format!("{}-{:02}-{:02}", now.year(), now.month() as u8, now.day())
 }

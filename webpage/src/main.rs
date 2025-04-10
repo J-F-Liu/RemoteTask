@@ -173,7 +173,7 @@ fn List() -> Element {
                                             },
                                             "取消"
                                         }
-                                    } else if task.status == "Failed" {
+                                    } else if task.status == "Failed" && task.can_rerun() {
                                         button {
                                             class: "outline secondary",
                                             onclick: move |_| async move {
