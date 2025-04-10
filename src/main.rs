@@ -66,10 +66,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state)
         .nest_service("/logs", ServeDir::new(logs_dir))
         .nest_service("/package", ServeDir::new(output_dir))
-        .fallback_service(
-            ServeDir::new("webpage/target/dx/webpage/release/web/public").precompressed_br(),
-        );
-    // .fallback_service(ServeDir::new("assets").precompressed_br());
+        .fallback_service(ServeDir::new("public").precompressed_br());
 
     // run it
     let listener = tokio::net::TcpListener::bind(server_url)
