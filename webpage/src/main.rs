@@ -3,7 +3,6 @@ use serde_json::json;
 use time::OffsetDateTime;
 use web_sys::window;
 
-const FAVICON: Asset = asset!("/assets/favicon.ico");
 const PICO_CSS: Asset = asset!("/assets/pico.min.css");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
@@ -16,7 +15,6 @@ fn main() {
 #[component]
 fn App() -> Element {
     rsx! {
-        document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: PICO_CSS }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         Head {}
