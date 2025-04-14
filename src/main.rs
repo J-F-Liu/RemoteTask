@@ -41,6 +41,9 @@ async fn main() -> anyhow::Result<()> {
     let conn = Database::connect(db_url)
         .await
         .expect("Database connection failed");
+    task::create_table_if_not_exists(&conn)
+        .await
+        .expect("Failed to create table");
 
     let runner = start_runner(conn.clone(), work_dir, output_dir.clone());
 

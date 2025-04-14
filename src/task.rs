@@ -42,6 +42,14 @@ impl Model {
     }
 }
 
+pub async fn create_table_if_not_exists(db: &DbConn) -> Result<(), DbErr> {
+    let backend = db.get_database_backend();
+    let schema = sea_orm::Schema::new(backend);
+    let mut statement = schema.create_table_from_entity(Entity);
+    let statement = backend.build(statement.if_not_exists());
+    db.execute(statement).await.map(|_| ())
+}
+
 pub async fn create_task(
     db: &DbConn,
     name: String,
