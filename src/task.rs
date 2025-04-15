@@ -11,9 +11,9 @@ pub struct Model {
     pub output: Option<String>,
     pub status: TaskStatus,
     #[serde(with = "time::serde::rfc3339")]
-    pub created_at: TimeDateTimeWithTimeZone,
+    pub created_at: time::OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: TimeDateTimeWithTimeZone,
+    pub updated_at: time::OffsetDateTime,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, EnumIter, DeriveActiveEnum, Serialize)]

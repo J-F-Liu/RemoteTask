@@ -6,6 +6,7 @@ use axum::{
 };
 use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
@@ -146,9 +147,9 @@ pub fn run_just_task(
     output_file: Option<&std::path::PathBuf>,
 ) -> std::io::Result<()> {
     let items = command.split(' ').collect::<Vec<_>>();
-    let file = std::fs::File::create(log_file)?;
+    let mut file = std::fs::File::create(log_file)?;
     let io = Stdio::from(file.try_clone()?);
-    let io2 = Stdio::from(file);
+    let io2 = Stdio::from(file.try_clone()?);
     let mut just = Command::new("just")
         .current_dir(work_dir)
         .args(items)
@@ -165,6 +166,7 @@ pub fn run_just_task(
                     "Command finished, but output file {} does not exist",
                     output_file.display()
                 );
+                file.write_all(message.as_bytes())?;
                 Err(std::io::Error::new(std::io::ErrorKind::Other, message))
             }
         } else {
@@ -175,6 +177,7 @@ pub fn run_just_task(
             Some(code) => format!("Command failed, return code: {code}"),
             None => "Command terminated by signal".to_owned(),
         };
+        file.write_all(message.as_bytes())?;
         Err(std::io::Error::new(std::io::ErrorKind::Other, message))
     }
 }
