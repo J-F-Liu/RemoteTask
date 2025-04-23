@@ -2,6 +2,7 @@
 
 A simple web server that serve APIs to run [just](https://github.com/casey/just) tasks remotely.
 
+- `GET /menu` - Get available recipes
 - `POST /run` - Shedule a new task
 - `POST /reset/{id}` - Reset task status so it will be run again
 - `POST /canel/{id}` - Delete a task from shedule

@@ -19,19 +19,16 @@ static CHECKING: AtomicBool = AtomicBool::new(true);
 #[derive(Clone)]
 pub struct AppState {
     pub conn: DatabaseConnection,
+    pub work_dir: std::path::PathBuf,
 }
 
-pub fn start_runner(
-    conn: DatabaseConnection,
-    work_dir: std::path::PathBuf,
-    output_dir: std::path::PathBuf,
-) -> JoinHandle<()> {
+pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
         while RUNNING.load(Ordering::SeqCst) {
             if CHECKING.load(Ordering::SeqCst) {
                 rt.block_on(async {
-                    run_tasks(&conn, &work_dir, &output_dir)
+                    run_tasks(&state.conn, &state.work_dir, &output_dir)
                         .await
                         .unwrap_or_else(|err| {
                             error!("Failed to run tasks: {}", err);
@@ -138,6 +135,30 @@ pub async fn list_task(
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(Json((tasks, pages)))
+}
+
+pub async fn get_available(
+    state: State<AppState>,
+) -> Result<Json<Vec<String>>, (StatusCode, String)> {
+    let output = Command::new("just")
+        .current_dir(&state.work_dir)
+        .arg("--list")
+        .output()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    if output.status.success() {
+        Ok(Json(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .skip(1) // skip "Available recipes:"
+                .map(|line| line.trim().to_string())
+                .collect::<Vec<_>>(),
+        ))
+    } else {
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ))
+    }
 }
 
 pub fn run_just_task(

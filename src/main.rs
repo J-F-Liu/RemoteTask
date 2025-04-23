@@ -45,12 +45,13 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Failed to create table");
 
-    let runner = start_runner(conn.clone(), work_dir, output_dir.clone());
+    let state = AppState { conn, work_dir };
 
-    let state = AppState { conn };
+    let runner = start_runner(state.clone(), output_dir.clone());
 
     // build our application with some routes
     let router = Router::new()
+        .route("/menu", get(get_available))
         .route("/run", post(add_task))
         .route("/cancel/{id}", post(cancel_task))
         .route("/reset/{id}", post(reset_task))

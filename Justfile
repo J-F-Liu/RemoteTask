@@ -18,7 +18,6 @@ build args='':
 
 bundle:
     just build --release
-    -rm bundle/release-system.zip
-    7z a -tzip bundle/release-system.zip -r public/* .env
-    cd migration && 7z a -tzip ../bundle/release-system.zip tasks.db
-    cd target/release && 7z a -tzip ../../bundle/release-system.zip *.exe
+    -rm bundle/remote-task.zip
+    7z a -tzip bundle/remote-task.zip -r public/* .env
+    cd target/release && 7z a -tzip ../../bundle/remote-task.zip *.exe
