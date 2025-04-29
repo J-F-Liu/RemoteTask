@@ -1,11 +1,13 @@
 use anyhow::Context;
 use axum::{
     Router,
+    http::header,
     routing::{get, post},
 };
 use sea_orm::Database;
 use std::env;
-use tower_http::services::ServeDir;
+use tower::ServiceBuilder;
+use tower_http::{ServiceBuilderExt, services::ServeDir};
 use tracing::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -57,7 +59,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/reset/{id}", post(reset_task))
         .route("/list/{page}", get(list_task))
         .with_state(state)
-        .nest_service("/logs", ServeDir::new(logs_dir))
+        .nest_service(
+            "/logs",
+            ServiceBuilder::new()
+                .override_response_header(
+                    header::CONTENT_TYPE,
+                    header::HeaderValue::from_static("text/plain; charset=utf-8"),
+                )
+                .service(ServeDir::new(logs_dir)),
+        )
         .nest_service("/package", ServeDir::new(output_dir))
         .fallback_service(ServeDir::new("public").precompressed_br());
 
