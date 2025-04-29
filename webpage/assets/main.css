@@ -11,12 +11,17 @@ header {
     padding-top: var(--pico-typography-spacing-vertical);
 }
 
-fieldset {
-    margin-bottom: 0;
+fieldset label {
+    font-size: 1.2rem;
+    font-weight: 600;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    margin: 0 0.5em;
 }
 
-input[type=submit] {
-    margin: auto 0;
+.gc1-4 {
+    grid-column: 1 / 4;
 }
 
 thead th {

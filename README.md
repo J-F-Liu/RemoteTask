@@ -10,7 +10,8 @@ A simple web server that serve APIs to run [just](https://github.com/casey/just)
 
 See `test.rest` for how to use the APIs.
 
-An example web page is created for my own need.
+An example web page is created for demonstration.
+![Web page](webpage/screen-shot.png)
 
 ### Dependencies
 
