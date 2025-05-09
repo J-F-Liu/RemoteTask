@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-axum = { version = "0.8.1", features = ["macros"] }
+axum = { version = "0.8.4", features = ["macros"] }
 sea-orm = { version = "1.1", default-features = false, features = [
     "sqlx-sqlite",
     "runtime-tokio-rustls",
@@ -14,9 +14,11 @@ sea-orm = { version = "1.1", default-features = false, features = [
     "with-json",
 ] }
 dotenvy = "0.15.7"
+futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1.0", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 tower = "0.5.1"
 tower-http = { version = "0.6.2", features = ["fs", "set-header", "util"] }
 tracing = "0.1"

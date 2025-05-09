@@ -28,3 +28,6 @@ POST http://127.0.0.1:5678/cancel/27
 
 ###
 GET http://127.0.0.1:5678/list/1
+
+###
+GET http://127.0.0.1:5678/status

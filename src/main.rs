@@ -6,6 +6,7 @@ use axum::{
 };
 use sea_orm::Database;
 use std::env;
+use tokio::sync::broadcast;
 use tower::ServiceBuilder;
 use tower_http::{ServiceBuilderExt, services::ServeDir};
 use tracing::*;
@@ -47,7 +48,11 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Failed to create table");
 
-    let state = AppState { conn, work_dir };
+    let state = AppState {
+        conn,
+        work_dir: work_dir.clone(),
+        sender: broadcast::channel(10).0,
+    };
 
     let runner = start_runner(state.clone(), output_dir.clone());
 
@@ -58,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/cancel/{id}", post(cancel_task))
         .route("/reset/{id}", post(reset_task))
         .route("/list/{page}", get(list_task))
+        .route("/status", get(task_status_sse))
         .with_state(state)
         .nest_service(
             "/logs",

@@ -3,6 +3,7 @@ use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
+    response::sse::{Event, Sse},
 };
 use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
@@ -11,6 +12,8 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use tokio::runtime::Runtime;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::*;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
@@ -20,6 +23,7 @@ static CHECKING: AtomicBool = AtomicBool::new(true);
 pub struct AppState {
     pub conn: DatabaseConnection,
     pub work_dir: std::path::PathBuf,
+    pub sender: broadcast::Sender<Event>,
 }
 
 pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHandle<()> {
@@ -28,11 +32,9 @@ pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHand
         while RUNNING.load(Ordering::SeqCst) {
             if CHECKING.load(Ordering::SeqCst) {
                 rt.block_on(async {
-                    run_tasks(&state.conn, &state.work_dir, &output_dir)
-                        .await
-                        .unwrap_or_else(|err| {
-                            error!("Failed to run tasks: {}", err);
-                        });
+                    run_tasks(&state, &output_dir).await.unwrap_or_else(|err| {
+                        error!("Failed to run tasks: {}", err);
+                    });
                 });
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
@@ -41,7 +43,6 @@ pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHand
 }
 
 pub async fn shutdown_signal(runner: JoinHandle<()>) {
-    // 监听 Ctrl+C 信号
     tokio::signal::ctrl_c().await.expect("Listen for Ctrl+C");
 
     info!("Shutdown server...");
@@ -50,32 +51,36 @@ pub async fn shutdown_signal(runner: JoinHandle<()>) {
 }
 
 pub async fn run_tasks(
-    conn: &DatabaseConnection,
-    work_dir: &std::path::Path,
+    state: &AppState,
     output_dir: &std::path::Path,
 ) -> Result<(), sea_orm::DbErr> {
-    let tasks = task::pending_tasks(conn).await?;
+    let tasks = task::pending_tasks(&state.conn).await?;
     if tasks.is_empty() {
         CHECKING.store(false, Ordering::SeqCst);
     }
     for task in tasks {
         info!("Running task: {}", task.id);
-        task::update_task(conn, task.id, task::TaskStatus::Running).await?;
-        let log_dir = work_dir.join("logs").join(task.month());
+        update_task(state, task.id, task::TaskStatus::Running).await?;
+        let log_dir = state.work_dir.join("logs").join(task.month());
         if !log_dir.is_dir() {
             std::fs::create_dir_all(&log_dir)
                 .unwrap_or_else(|err| error!("Failed to create log directory: {}", err));
         }
         let log_file = log_dir.join(format!("{}.log", task.id));
         let output_file = task.output.map(|path| output_dir.join(path));
-        match run_just_task(&task.command, work_dir, &log_file, output_file.as_ref()) {
+        match run_just_task(
+            &task.command,
+            &state.work_dir,
+            &log_file,
+            output_file.as_ref(),
+        ) {
             Ok(_) => {
                 info!("Task {} completed successfully", task.id);
-                task::update_task(conn, task.id, task::TaskStatus::Success).await?;
+                update_task(state, task.id, task::TaskStatus::Success).await?;
             }
             Err(err) => {
                 error!("Task {} failed: {}", task.id, err);
-                task::update_task(conn, task.id, task::TaskStatus::Failed).await?;
+                update_task(state, task.id, task::TaskStatus::Failed).await?;
             }
         }
     }
@@ -114,11 +119,34 @@ pub async fn reset_task(
     state: State<AppState>,
     Path(id): Path<i32>,
 ) -> Result<Json<task::Model>, (StatusCode, String)> {
-    let task = task::update_task(&state.conn, id, task::TaskStatus::Pending)
+    let task = update_task(&state, id, task::TaskStatus::Pending)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     CHECKING.store(true, Ordering::SeqCst);
     Ok(Json(task))
+}
+
+// When updating task status, notify via channel
+pub async fn update_task(
+    state: &AppState,
+    id: i32,
+    status: task::TaskStatus,
+) -> Result<task::Model, sea_orm::DbErr> {
+    let task = task::update_task(&state.conn, id, status).await?;
+    let event = Event::default()
+        .id(id.to_string())
+        .data(format!("{:?}", status));
+    let _ = state.sender.send(event);
+    Ok(task)
+}
+
+// SSE endpoint for task status updates
+pub async fn task_status_sse(
+    State(state): State<AppState>,
+) -> Sse<impl futures::Stream<Item = Result<Event, BroadcastStreamRecvError>>> {
+    let receiver = state.sender.subscribe();
+    let stream = BroadcastStream::new(receiver);
+    Sse::new(stream)
 }
 
 pub async fn list_task(
