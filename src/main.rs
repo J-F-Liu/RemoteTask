@@ -2,6 +2,7 @@ use anyhow::Context;
 use axum::{
     Router,
     http::header,
+    middleware,
     routing::{get, post},
 };
 use sea_orm::Database;
@@ -22,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
     let db_url = env::var("DATABASE_URL").unwrap_or("sqlite:./tasks.db?mode=rwc".to_string());
     let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
     let port = env::var("PORT").unwrap_or("5678".to_string());
+    let secret = env::var("APP_SECRET").unwrap_or("".to_string());
     let work_dir = env::var("WORK_DIR")
         .map(|dir| std::path::PathBuf::from(dir))
         .unwrap_or(env::current_dir().unwrap());
@@ -57,14 +59,18 @@ async fn main() -> anyhow::Result<()> {
     let runner = start_runner(state.clone(), output_dir.clone());
 
     // build our application with some routes
-    let router = Router::new()
+    let mut router = Router::new()
         .route("/menu", get(get_available))
         .route("/run", post(add_task))
         .route("/cancel/{id}", post(cancel_task))
         .route("/reset/{id}", post(reset_task))
         .route("/list/{page}", get(list_task))
         .route("/status", get(task_status_sse))
-        .with_state(state)
+        .with_state(state);
+    if !secret.is_empty() {
+        router = router.route_layer(middleware::from_fn_with_state(secret, validate_jwt))
+    }
+    router = router
         .nest_service(
             "/logs",
             ServiceBuilder::new()

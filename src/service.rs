@@ -1,10 +1,15 @@
 use crate::task;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Request, State},
     http::StatusCode,
-    response::sse::{Event, Sse},
+    middleware::Next,
+    response::{
+        IntoResponse,
+        sse::{Event, Sse},
+    },
 };
+use axum_extra::extract::CookieJar;
 use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
 use std::io::Write;
@@ -229,4 +234,36 @@ pub fn run_just_task(
         file.write_all(message.as_bytes())?;
         Err(std::io::Error::new(std::io::ErrorKind::Other, message))
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct JwtPayload {
+    pub user: String,
+    pub role: String,
+    pub iat: i64,
+    pub exp: i64,
+}
+
+pub async fn validate_jwt(
+    secret: State<String>,
+    request: Request,
+    next: Next,
+) -> impl IntoResponse {
+    let jar = CookieJar::from_headers(request.headers());
+    if let Some(token) = jar.get("token").map(|c| c.value()) {
+        match jsonwebtoken::decode::<JwtPayload>(
+            token,
+            &jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
+            &jsonwebtoken::Validation::default(),
+        ) {
+            Ok(_payload) => {
+                // info!("JWT payload: {:?}", payload.claims);
+                return next.run(request).await;
+            }
+            Err(err) => {
+                error!("JWT validation failed: {}", err);
+            }
+        }
+    }
+    (StatusCode::UNAUTHORIZED, "Invalid token".to_string()).into_response()
 }
