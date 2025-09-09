@@ -267,3 +267,27 @@ pub async fn validate_jwt(
     }
     (StatusCode::UNAUTHORIZED, "Invalid token".to_string()).into_response()
 }
+
+#[test]
+fn generate_token() {
+    dotenvy::dotenv().unwrap();
+    let secret = std::env::var("APP_SECRET").unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    dbg!(now);
+    let payload = JwtPayload {
+        user: "Jeff".to_string(),
+        role: "admin".to_string(),
+        iat: now,
+        exp: now + 60 * 60 * 24 * 90,
+    };
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &payload,
+        &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .unwrap();
+    println!("Token: {}", token);
+}
