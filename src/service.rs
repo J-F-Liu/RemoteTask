@@ -12,9 +12,8 @@ use axum::{
 use axum_extra::extract::CookieJar;
 use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
-use std::io::Write;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::process::Command;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
@@ -32,7 +31,7 @@ pub struct AppState {
 
 pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
         loop {
             if !RUNNING.load(Ordering::SeqCst) {
                 break;
@@ -81,7 +80,9 @@ pub async fn run_tasks(
             &state.work_dir,
             &log_file,
             output_file.as_ref(),
-        ) {
+        )
+        .await
+        {
             Ok(_) => {
                 info!("Task {} completed successfully", task.id);
                 update_task(state, task.id, task::TaskStatus::Success).await?;
@@ -180,6 +181,7 @@ pub async fn get_available(
         .current_dir(&state.work_dir)
         .arg("--list")
         .output()
+        .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     if output.status.success() {
         Ok(Json(
@@ -197,23 +199,43 @@ pub async fn get_available(
     }
 }
 
-pub fn run_just_task(
+pub async fn run_just_task(
     command: &str,
     work_dir: &std::path::Path,
     log_file: &std::path::Path,
     output_file: Option<&std::path::PathBuf>,
 ) -> std::io::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     let items = command.split(' ').collect::<Vec<_>>();
-    let mut file = std::fs::File::create(log_file)?;
-    let io = Stdio::from(file.try_clone()?);
-    let io2 = Stdio::from(file.try_clone()?);
+    let mut file = tokio::fs::File::create(log_file).await?;
     let mut just = Command::new("just")
         .current_dir(work_dir)
         .args(items)
-        .stdout(io)
-        .stderr(io2)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()?;
-    let status = just.wait()?;
+
+    // Capture stdout and stderr
+    let stdout = just.stdout.take();
+    let stderr = just.stderr.take();
+
+    let status = just.wait().await?;
+
+    // Write stdout to log file
+    if let Some(mut stdout_pipe) = stdout {
+        let mut buf = Vec::new();
+        stdout_pipe.read_to_end(&mut buf).await?;
+        file.write_all(&buf).await?;
+    }
+
+    // Write stderr to log file
+    if let Some(mut stderr_pipe) = stderr {
+        let mut buf = Vec::new();
+        stderr_pipe.read_to_end(&mut buf).await?;
+        file.write_all(&buf).await?;
+    }
+
     if status.success() {
         if let Some(output_file) = output_file {
             if output_file.is_file() {
@@ -223,7 +245,7 @@ pub fn run_just_task(
                     "Command finished, but output file {} does not exist",
                     output_file.display()
                 );
-                file.write_all(message.as_bytes())?;
+                file.write_all(message.as_bytes()).await?;
                 Err(std::io::Error::new(std::io::ErrorKind::Other, message))
             }
         } else {
@@ -234,7 +256,7 @@ pub fn run_just_task(
             Some(code) => format!("Command failed, return code: {code}"),
             None => "Command terminated by signal".to_owned(),
         };
-        file.write_all(message.as_bytes())?;
+        file.write_all(message.as_bytes()).await?;
         Err(std::io::Error::new(std::io::ErrorKind::Other, message))
     }
 }
