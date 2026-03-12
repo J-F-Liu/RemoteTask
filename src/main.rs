@@ -20,6 +20,21 @@ use service::*;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
+    // CLI: generate token and exit
+    let mut args = std::env::args();
+    if let Some(_) = args.next() {
+        if let Some(cmd) = args.next() {
+            if cmd == "generate-token" || cmd == "--generate-token" {
+                let user = args.next().unwrap_or_else(|| "user".to_string());
+                let days = args
+                    .next()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(90);
+                generate_token(user, days);
+                return Ok(());
+            }
+        }
+    }
     let db_url = env::var("DATABASE_URL").unwrap_or("sqlite:./tasks.db?mode=rwc".to_string());
     let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
     let port = env::var("PORT").unwrap_or("5678".to_string());

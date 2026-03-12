@@ -268,20 +268,24 @@ pub async fn validate_jwt(
     (StatusCode::UNAUTHORIZED, "Invalid token".to_string()).into_response()
 }
 
-#[test]
-fn generate_token() {
-    dotenvy::dotenv().unwrap();
-    let secret = std::env::var("APP_SECRET").unwrap();
+pub fn generate_token(user: String, days: i64) {
+    dotenvy::dotenv().ok();
+    let secret = match std::env::var("APP_SECRET") {
+        Ok(s) if !s.is_empty() => s,
+        _ => {
+            eprintln!("APP_SECRET not set");
+            std::process::exit(1);
+        }
+    };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    dbg!(now);
     let payload = JwtPayload {
-        user: "Jeff".to_string(),
+        user,
         role: "admin".to_string(),
         iat: now,
-        exp: now + 60 * 60 * 24 * 90,
+        exp: now + 60 * 60 * 24 * days,
     };
     let token = jsonwebtoken::encode(
         &jsonwebtoken::Header::default(),
@@ -289,5 +293,8 @@ fn generate_token() {
         &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
     )
     .unwrap();
-    println!("Token: {}", token);
+    // write token to token.txt and also print it
+    if let Err(err) = std::fs::write("token.txt", format!("{}\n", token)) {
+        eprintln!("Failed to write token.txt: {}", err);
+    }
 }
