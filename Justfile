@@ -1,20 +1,20 @@
 set shell := ["sh", "-c"]
 
 webpage:
-	cd webpage && dx bundle --platform web
-	-rm public/index.html
-	-rm public/assets/*
-	cp -r webpage/target/dx/webpage/release/web/public/* public
+    cd webpage && dx bundle --release --platform web
+    -rm public/index.html
+    -rm public/assets/*
+    cp -r webpage/target/dx/webpage/release/web/public/* public
 
 run args='':
-	just webpage
-	cargo run {{args}}
+    just webpage
+    cargo run {{ args }}
 
 build args='':
-	@echo "Building..."
-	just webpage
-	cargo build {{args}}
-	@echo "Done"
+    @echo "Building..."
+    just webpage
+    cargo build {{ args }}
+    @echo "Done"
 
 bundle:
     just build --release

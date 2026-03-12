@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use time::OffsetDateTime;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Task {
     pub id: i32,
     pub name: String,
