@@ -11,14 +11,27 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use sea_orm::DatabaseConnection;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
+use tokio_stream::StreamExt as TokioStreamExt;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::*;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskStatusEvent {
+    pub task_id: i32,
+    pub status: String,
+    pub timestamp: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ShutdownSignal;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 static CHECKING: AtomicBool = AtomicBool::new(true);
@@ -27,7 +40,8 @@ static CHECKING: AtomicBool = AtomicBool::new(true);
 pub struct AppState {
     pub conn: DatabaseConnection,
     pub work_dir: std::path::PathBuf,
-    pub sender: broadcast::Sender<Event>,
+    pub sender: broadcast::Sender<TaskStatusEvent>,
+    pub shutdown_tx: broadcast::Sender<ShutdownSignal>,
 }
 
 pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHandle<()> {
@@ -47,15 +61,34 @@ pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHand
     })
 }
 
-pub async fn shutdown_signal(runner: JoinHandle<()>) {
+pub async fn shutdown_signal(
+    sender: broadcast::Sender<TaskStatusEvent>,
+    shutdown_tx: broadcast::Sender<ShutdownSignal>,
+    runner: JoinHandle<()>,
+) {
+    // Wait for Ctrl+C signal
     tokio::signal::ctrl_c().await.expect("Listen for Ctrl+C");
 
     info!("Shutdown server...");
     RUNNING.store(false, Ordering::SeqCst);
+
+    // Wait for runner to finish
     match runner.await {
         Ok(_) => info!("Runner finished"),
         Err(err) => error!("Runner join error: {}", err),
     }
+
+    // Send shutdown signal to all SSE clients
+    let _ = shutdown_tx.send(ShutdownSignal);
+    info!("Shutdown signal sent to SSE clients");
+
+    // Drop sender to close task status channel
+    drop(sender);
+
+    // Give SSE clients a moment to close
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    info!("SSE connections closed");
 }
 
 pub async fn run_tasks(
@@ -143,9 +176,11 @@ pub async fn update_task(
     status: task::TaskStatus,
 ) -> Result<task::Model, sea_orm::DbErr> {
     let task = task::update_task(&state.conn, id, status).await?;
-    let event = Event::default()
-        .id(id.to_string())
-        .data(format!("{:?}", status));
+    let event = TaskStatusEvent {
+        task_id: id,
+        status: format!("{:?}", status),
+        timestamp: chrono::Local::now().to_rfc3339(),
+    };
     let _ = state.sender.send(event);
     Ok(task)
 }
@@ -154,9 +189,40 @@ pub async fn update_task(
 pub async fn task_status_sse(
     State(state): State<AppState>,
 ) -> Sse<impl futures::Stream<Item = Result<Event, BroadcastStreamRecvError>>> {
+    use futures::stream::select;
+
     let receiver = state.sender.subscribe();
-    let stream = BroadcastStream::new(receiver);
-    Sse::new(stream)
+    let shutdown_rx = state.shutdown_tx.subscribe();
+
+    let stream = TokioStreamExt::map(BroadcastStream::new(receiver), |event| match event {
+        Ok(status_event) => {
+            let data = json!({
+                "task_id": status_event.task_id,
+                "status": status_event.status,
+                "timestamp": status_event.timestamp,
+            })
+            .to_string();
+            Ok(Event::default()
+                .id(status_event.task_id.to_string())
+                .event("task_status")
+                .data(data))
+        }
+        Err(e) => Err(e),
+    });
+
+    // Create a stream that terminates on shutdown signal
+    let shutdown_stream = TokioStreamExt::map(
+        BroadcastStream::new(shutdown_rx),
+        |_| -> Result<Event, BroadcastStreamRecvError> {
+            // Shutdown signal received, return error to terminate stream
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(0))
+        },
+    );
+
+    // Merge both streams - first one to emit wins
+    let combined = select(stream, shutdown_stream);
+
+    Sse::new(combined)
 }
 
 pub async fn list_task(

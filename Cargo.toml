@@ -5,8 +5,10 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-axum = { version = "0.8.4", features = ["macros"] }
-axum-extra = { version = "0.10.1", features = ["cookie"] }
+axum = { version = "0.8.8", features = ["macros"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1.0"
 sea-orm = { version = "1.1", default-features = false, features = [
     "sqlx-sqlite",
     "runtime-tokio-rustls",

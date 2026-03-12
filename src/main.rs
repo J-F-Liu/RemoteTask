@@ -65,10 +65,13 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Failed to create table");
 
+    let (sender, _) = broadcast::channel(10);
+    let (shutdown_tx, _) = broadcast::channel(10);
     let state = AppState {
         conn,
         work_dir: work_dir.clone(),
-        sender: broadcast::channel(10).0,
+        sender: sender.clone(),
+        shutdown_tx: shutdown_tx.clone(),
     };
 
     let runner = start_runner(state.clone(), output_dir.clone());
@@ -103,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to bind TCP listener")?;
     axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal(runner))
+        .with_graceful_shutdown(shutdown_signal(sender, shutdown_tx, runner))
         .await
         .context("axum::serve failed")?;
     Ok(())
