@@ -15,9 +15,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::JoinHandle;
-use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::*;
 
@@ -32,17 +31,18 @@ pub struct AppState {
 }
 
 pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        let rt = Runtime::new().unwrap();
-        while RUNNING.load(Ordering::SeqCst) {
-            if CHECKING.load(Ordering::SeqCst) {
-                rt.block_on(async {
-                    run_tasks(&state, &output_dir).await.unwrap_or_else(|err| {
-                        error!("Failed to run tasks: {}", err);
-                    });
-                });
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            if !RUNNING.load(Ordering::SeqCst) {
+                break;
             }
-            std::thread::sleep(std::time::Duration::from_secs(1));
+            if CHECKING.load(Ordering::SeqCst) {
+                if let Err(err) = run_tasks(&state, &output_dir).await {
+                    error!("Failed to run tasks: {}", err);
+                }
+            }
+            interval.tick().await;
         }
     })
 }
@@ -52,7 +52,10 @@ pub async fn shutdown_signal(runner: JoinHandle<()>) {
 
     info!("Shutdown server...");
     RUNNING.store(false, Ordering::SeqCst);
-    runner.join().expect("Terminate runner");
+    match runner.await {
+        Ok(_) => info!("Runner finished"),
+        Err(err) => error!("Runner join error: {}", err),
+    }
 }
 
 pub async fn run_tasks(
