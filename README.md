@@ -26,6 +26,9 @@ An example web page is created for demonstration.
 3. Inside `WORK_DIR` create a `justfile` and define your tasks
 4. Start the server
 5. Use [xh](https://github.com/ducaale/xh) or VSCode REST client to call the APIs.
+6. Generate a token for authentication
+   - `remote-task generate-token <username> <days>`
+   - The token will be written to `token.txt`
 
 ### How to build
 1. Run `just build --release` to build the server

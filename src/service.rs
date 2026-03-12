@@ -322,4 +322,5 @@ pub fn generate_token(user: String, days: i64) {
     if let Err(err) = std::fs::write("token.txt", format!("{}\n", token)) {
         eprintln!("Failed to write token.txt: {}", err);
     }
+    println!("Token generated and saved to token.txt.");
 }
