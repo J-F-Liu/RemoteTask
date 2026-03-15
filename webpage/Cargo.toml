@@ -34,9 +34,14 @@ mobile = ["dioxus/mobile"]
 
 [profile]
 
+[profile.release]
+debug = false
+strip = true
+
 [profile.wasm-dev]
 inherits = "dev"
 opt-level = 1
+debug = false
 
 [profile.server-dev]
 inherits = "dev"
