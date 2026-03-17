@@ -85,7 +85,7 @@ fn Form(
         form {
             class: "grid",
             onsubmit: move |evt| async move {
-                evt.stop_propagation();
+                evt.prevent_default();
                 submit_form(&evt.data).await.unwrap();
                 page.set(1);
                 resource.restart();
