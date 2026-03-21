@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use wasm_bindgen::JsCast;
@@ -64,6 +65,12 @@ fn Main() -> Element {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct DirInfo {
+    pub current: String,
+    pub all_dirs: Vec<String>,
+}
+
 #[component]
 fn Form(
     page: Signal<i32>,
@@ -81,7 +88,53 @@ fn Form(
             .await
             .unwrap_or_default()
     });
+    let dir = use_resource(move || async move {
+        let origin = window().unwrap().location().origin().unwrap();
+        let client = reqwest::Client::new();
+        client
+            .get(format!("{}/get_dir", origin))
+            .send()
+            .await
+            .unwrap()
+            .json::<DirInfo>()
+            .await
+            .unwrap_or_default()
+    });
     rsx! {
+        form {
+            class: "grid",
+            onsubmit: move |evt| async move {
+                evt.prevent_default();
+                let values = evt.data.values();
+                let dir = values
+                    .iter()
+                    .find(|(k, _)| k == "dir")
+                    .and_then(|(_, v)| match v {
+                        dioxus::html::FormValue::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let origin = window().unwrap().location().origin().unwrap();
+                web_sys::window().unwrap().location().set_href(&format!("{}/change_dir?dir={}", origin, dir)).unwrap();
+            },
+            fieldset { role: "group", class: "gc1-4",
+                label { "Change Dir" }
+                input {
+                    r#type: "text",
+                    name: "dir",
+                    id: "dir",
+                    value: "{dir().unwrap_or_default().current}",
+                    list: "dirs-list",
+                }
+                datalist { id: "dirs-list",
+                    for (idx, d) in dir().unwrap_or_default().all_dirs.iter().enumerate() {
+                        option { id: idx, value: "{d}"}
+                    }
+                }
+            }
+            input { r#type: "submit", value: "Change Dir" }
+        }
+        hr {}
         form {
             class: "grid",
             onsubmit: move |evt| async move {

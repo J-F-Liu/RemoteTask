@@ -7,6 +7,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     pub name: String,
+    pub dir: String,
     pub command: String,
     pub output: Option<String>,
     pub status: TaskStatus,
@@ -42,16 +43,50 @@ impl Model {
     }
 }
 
+pub async fn add_column_if_missing(db: &DbConn, table_name: &str, column_name: &str, column_type: &str, column_default: &str) -> Result<(), DbErr> {
+    let backend = db.get_database_backend();
+    let column_exists: bool = match backend {
+        sea_orm::DatabaseBackend::Sqlite => {
+            let sql = sea_orm::Statement::from_sql_and_values(
+                backend,
+                format!("PRAGMA table_info({table_name})"),
+                vec![],
+            );
+            let result = db.query_all(sql).await?;
+
+            result.iter().find(|r| {
+                r.try_get::<String>("", "name") == Ok(column_name.to_string())
+            }).is_some()
+        }
+        _ => unreachable!(),
+    };
+    if !column_exists {
+        let sql = sea_orm::Statement::from_sql_and_values(
+            backend,
+            format!("ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} NOT NULL DEFAULT {column_default}"),
+            vec![],
+        );
+        db.execute(sql).await?;
+    }
+    Ok(())
+}
+
 pub async fn create_table_if_not_exists(db: &DbConn) -> Result<(), DbErr> {
     let backend = db.get_database_backend();
     let schema = sea_orm::Schema::new(backend);
     let mut statement = schema.create_table_from_entity(Entity);
     let statement = backend.build(statement.if_not_exists());
-    db.execute(statement).await.map(|_| ())
+    db.execute(statement).await?;
+
+    // Check for necessary migrations.
+    add_column_if_missing(db, "task", "dir", "TEXT", "''").await?;
+
+    Ok(())
 }
 
 pub async fn create_task(
     db: &DbConn,
+    dir: String,
     name: String,
     command: String,
     output: Option<String>,
@@ -59,6 +94,7 @@ pub async fn create_task(
     let now = TimeDateTimeWithTimeZone::now_utc();
     ActiveModel {
         name: Set(name),
+        dir: Set(dir),
         command: Set(command),
         output: Set(output),
         status: Set(TaskStatus::Pending),
