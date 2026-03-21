@@ -1,12 +1,11 @@
 use crate::task;
 use axum::{
     Json,
-    extract::{Path, Request, State},
+    extract::{Path, Request, State, Query},
     http::StatusCode,
     middleware::Next,
     response::{
-        IntoResponse,
-        sse::{Event, Sse},
+        IntoResponse, Redirect, sse::{Event, Sse}
     },
 };
 use axum_extra::extract::CookieJar;
@@ -17,11 +16,13 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt as TokioStreamExt;
+use tracing::{error, info};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
-use tracing::*;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaskStatusEvent {
@@ -39,9 +40,17 @@ static CHECKING: AtomicBool = AtomicBool::new(true);
 #[derive(Clone)]
 pub struct AppState {
     pub conn: DatabaseConnection,
-    pub work_dir: std::path::PathBuf,
+    pub work_dir: Arc<RwLock<PathBuf>>,
+    pub work_dirs: Vec<PathBuf>,
+    pub logs_dir: PathBuf,
     pub sender: broadcast::Sender<TaskStatusEvent>,
     pub shutdown_tx: broadcast::Sender<ShutdownSignal>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DirInfo {
+    pub current: String,
+    pub all_dirs: Vec<String>,
 }
 
 pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHandle<()> {
@@ -102,16 +111,17 @@ pub async fn run_tasks(
     for task in tasks {
         info!("Running task: {}", task.id);
         update_task(state, task.id, task::TaskStatus::Running).await?;
-        let log_dir = state.work_dir.join("logs").join(task.month());
+        let log_dir = state.logs_dir.join(task.month());
         if !log_dir.is_dir() {
             std::fs::create_dir_all(&log_dir)
                 .unwrap_or_else(|err| error!("Failed to create log directory: {}", err));
         }
         let log_file = log_dir.join(format!("{}.log", task.id));
         let output_file = task.output.map(|path| output_dir.join(path));
+        let work_dir = state.work_dir.read().unwrap().clone();
         match run_just_task(
             &task.command,
-            &state.work_dir,
+            &work_dir,
             &log_file,
             output_file.as_ref(),
         )
@@ -141,7 +151,8 @@ pub async fn add_task(
         .remove("command")
         .ok_or_else(|| (StatusCode::BAD_REQUEST, "command is required".to_string()))?;
     let output = payload.remove("output");
-    let task = task::create_task(&state.conn, name, command, output)
+    let work_dir = state.work_dir.read().unwrap().to_str().unwrap().to_string().clone();
+    let task = task::create_task(&state.conn, work_dir, name, command, output)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     CHECKING.store(true, Ordering::SeqCst);
@@ -246,8 +257,9 @@ pub async fn get_available(
 ) -> Result<Json<Vec<String>>, (StatusCode, String)> {
     let work_dir = state.work_dir.clone();
     let output = tokio::task::spawn_blocking(move || {
+        let work_dir = work_dir.read().unwrap();
         Command::new("just")
-            .current_dir(&work_dir)
+            .current_dir(work_dir.as_path())
             .arg("--list")
             .output()
     })
@@ -268,6 +280,33 @@ pub async fn get_available(
             String::from_utf8_lossy(&output.stderr).to_string(),
         ))
     }
+}
+
+pub async fn get_dir(
+    state: State<AppState>,
+) -> Json<DirInfo> {
+    let current = state.work_dir.read().unwrap().to_str().unwrap().to_string();
+    let all_dirs = state.work_dirs.iter()
+        .map(|d| d.to_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    Json(DirInfo { current, all_dirs })
+}
+
+#[derive(Deserialize)]
+pub struct ChangeDirParam {
+    dir: String
+}
+
+pub async fn change_dir(
+    state: State<AppState>,
+    Query(param): Query<ChangeDirParam>
+) -> Redirect {
+    let dir = PathBuf::from(param.dir);
+    if state.work_dirs.contains(&dir) {
+        let mut w = state.work_dir.write().unwrap();
+        *w = dir;
+    }
+    Redirect::to("/")
 }
 
 pub async fn run_just_task(

@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
 };
 use sea_orm::Database;
-use std::env;
+use std::{env, sync::{Arc, RwLock}};
 use tokio::sync::broadcast;
 use tower::ServiceBuilder;
 use tower_http::{ServiceBuilderExt, services::ServeDir};
@@ -16,6 +16,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod service;
 mod task;
 use service::*;
+
+const PATH_LIST_SEP: char = if cfg!(target_os = "windows") { ';' } else { ':' };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -39,9 +41,13 @@ async fn main() -> anyhow::Result<()> {
     let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
     let port = env::var("PORT").unwrap_or("5678".to_string());
     let secret = env::var("APP_SECRET").unwrap_or("".to_string());
-    let work_dir = env::var("WORK_DIR")
-        .map(|dir| std::path::PathBuf::from(dir))
-        .unwrap_or(env::current_dir().unwrap());
+    let work_dir_env = env::var("WORK_DIR").unwrap_or("".to_string());
+    let work_dirs: Vec<std::path::PathBuf> = work_dir_env
+        .split(PATH_LIST_SEP)
+        .filter(|s| !s.is_empty())
+        .map(|s| std::path::PathBuf::from(s))
+        .collect();
+    let work_dir = work_dirs.first().cloned().unwrap_or_else(|| env::current_dir().unwrap());
     let output_dir = env::var("OUTPUT_DIR")
         .map(|dir| std::path::PathBuf::from(dir))
         .unwrap_or(work_dir.clone());
@@ -69,7 +75,9 @@ async fn main() -> anyhow::Result<()> {
     let (shutdown_tx, _) = broadcast::channel(10);
     let state = AppState {
         conn,
-        work_dir: work_dir.clone(),
+        work_dir: Arc::new(RwLock::new(work_dir.clone())),
+        work_dirs,
+        logs_dir: logs_dir.clone(),
         sender: sender.clone(),
         shutdown_tx: shutdown_tx.clone(),
     };
@@ -78,6 +86,8 @@ async fn main() -> anyhow::Result<()> {
 
     // build our application with some routes
     let mut router = Router::new()
+        .route("/change_dir", get(change_dir))
+        .route("/get_dir", get(get_dir))
         .route("/menu", get(get_available))
         .route("/run", post(add_task))
         .route("/cancel/{id}", post(cancel_task))
