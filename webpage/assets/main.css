@@ -36,3 +36,14 @@ table {
 button.secondary {
     padding: 2px 20px;
 }
+
+:root, :host {
+    --pico-spacing: 0.5rem;
+    --pico-typography-spacing-vertical: 0.5rem;
+    --pico-form-element-spacing-vertical: 0.5rem;
+    --pico-form-element-spacing-horizontal: 0.5rem;
+}
+
+[role=group] [role=button], [role=group] [type=button], [role=group] [type=submit], [role=group] button, [role=search] [role=button], [role=search] [type=button], [role=search] [type=submit], [role=search] button {
+    --pico-form-element-spacing-horizontal: 0.5rem;
+}

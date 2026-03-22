@@ -118,23 +118,16 @@ fn Form(
                 web_sys::window().unwrap().location().set_href(&format!("{}/change_dir?dir={}", origin, dir)).unwrap();
             },
             fieldset { role: "group", class: "gc1-4",
-                label { "Change Dir" }
-                input {
-                    r#type: "text",
+                select {
                     name: "dir",
                     id: "dir",
-                    value: "{dir().unwrap_or_default().current}",
-                    list: "dirs-list",
-                }
-                datalist { id: "dirs-list",
-                    for (idx, d) in dir().unwrap_or_default().all_dirs.iter().enumerate() {
-                        option { id: idx, value: "{d}"}
+                    for d in dir().unwrap_or_default().all_dirs.iter() {
+                        option { value: "{d}", selected: "{d.as_str() == dir().unwrap_or_default().current.as_str()}", "{d}"}
                     }
                 }
+                input { r#type: "submit", value: "Change Dir" }
             }
-            input { r#type: "submit", value: "Change Dir" }
         }
-        hr {}
         form {
             class: "grid",
             onsubmit: move |evt| async move {
@@ -144,7 +137,6 @@ fn Form(
                 resource.restart();
             },
             fieldset { role: "group", class: "gc1-4",
-                label { "Select Task" }
                 input {
                     r#type: "text",
                     name: "task",
@@ -157,8 +149,8 @@ fn Form(
                         option { id: index, value: "{recipe}" }
                     }
                 }
+                input { r#type: "submit", value: "Run Task" }
             }
-            input { r#type: "submit", value: "Run" }
         }
         hr {}
     }
