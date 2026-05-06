@@ -35,7 +35,6 @@ pub struct TaskStatusEvent {
 pub struct ShutdownSignal;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
-static CHECKING: AtomicBool = AtomicBool::new(true);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -60,10 +59,8 @@ pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHand
             if !RUNNING.load(Ordering::SeqCst) {
                 break;
             }
-            if CHECKING.load(Ordering::SeqCst) {
-                if let Err(err) = run_tasks(&state, &output_dir).await {
-                    error!("Failed to run tasks: {}", err);
-                }
+            if let Err(err) = run_tasks(&state, &output_dir).await {
+                error!("Failed to run tasks: {}", err);
             }
             interval.tick().await;
         }
@@ -105,9 +102,6 @@ pub async fn run_tasks(
     output_dir: &std::path::Path,
 ) -> Result<(), sea_orm::DbErr> {
     let tasks = task::pending_tasks(&state.conn).await?;
-    if tasks.is_empty() {
-        CHECKING.store(false, Ordering::SeqCst);
-    }
     for task in tasks {
         info!("Running task: {}", task.id);
         update_task(state, task.id, task::TaskStatus::Running).await?;
@@ -155,7 +149,6 @@ pub async fn add_task(
     let task = task::create_task(&state.conn, work_dir, name, command, output)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    CHECKING.store(true, Ordering::SeqCst);
     Ok(Json(task))
 }
 
@@ -176,7 +169,6 @@ pub async fn reset_task(
     let task = update_task(&state, id, task::TaskStatus::Pending)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    CHECKING.store(true, Ordering::SeqCst);
     Ok(Json(task))
 }
 
