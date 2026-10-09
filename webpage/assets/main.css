@@ -37,17 +37,28 @@ button.secondary {
     padding: 2px 20px;
 }
 
-/* Project tabs */
-.tabs {
+/* Project tabs and recipe buttons */
+.tabs,
+.recipes {
     border-bottom: 1px solid var(--pico-muted-border-color);
 }
 
-.tabs ul {
+.tabs ul,
+.recipes ul {
     flex-wrap: wrap;
 }
 
-.tabs li {
+.tabs li,
+.recipes li {
     padding: 0;
+}
+
+.recipes {
+    padding: var(--pico-spacing) 0;
+}
+
+.recipes ul {
+    gap: var(--pico-spacing);
 }
 
 .tabs button.tab {
@@ -67,6 +78,11 @@ button.secondary {
     background-color: transparent;
     color: var(--pico-primary);
     border-bottom-color: var(--pico-primary);
+}
+
+/* Smaller font for the "+ New ..." buttons */
+button.new-button {
+    font-size: 0.8rem;
 }
 
 /* Dialog actions */

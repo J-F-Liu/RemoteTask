@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
+use serde::de::DeserializeOwned;
 use serde_json::json;
 use std::collections::HashMap;
+use std::rc::Rc;
 use wasm_bindgen::JsCast;
 use web_sys::window;
 
@@ -8,6 +10,7 @@ const PICO_CSS: Asset = asset!("/assets/pico.min.css");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 mod project;
+mod recipe;
 mod task;
 
 fn main() {
@@ -39,9 +42,11 @@ fn Main() -> Element {
     let page = use_signal(|| 1);
     let mut current = use_signal(|| 0i32);
     let new_project = use_signal(|| false);
+    let new_recipe = use_signal(|| false);
     let task_updates = use_signal(HashMap::<i32, String>::new);
 
-    let projects = use_resource(move || async move { fetch_projects().await });
+    let projects =
+        use_resource(move || async move { get_json::<Vec<project::Project>>("/projects").await });
 
     // Select the first project once the list is loaded
     use_effect(move || {
@@ -77,7 +82,7 @@ fn Main() -> Element {
         main { class: "container",
             ProjectTabs { projects, current, page, new_project }
             NewProjectDialog { projects, current, open: new_project }
-            Form { page, resource, current }
+            Recipes { current, page, resource, new_recipe }
             List { page, resource, task_updates }
         }
     }
@@ -114,7 +119,7 @@ fn ProjectTabs(
             ul {
                 li {
                     button {
-                        class: "outline",
+                        class: "outline new-button",
                         onclick: move |_| new_project.set(true),
                         "+ New Project"
                     }
@@ -124,63 +129,43 @@ fn ProjectTabs(
     }
 }
 
+/// A labelled text input for the dialog forms.
 #[component]
-fn NewProjectDialog(
-    projects: Resource<Vec<project::Project>>,
-    current: Signal<i32>,
+fn Field(name: String, label: String, placeholder: String) -> Element {
+    rsx! {
+        label { r#for: "{name}", "{label}" }
+        input {
+            r#type: "text",
+            name: "{name}",
+            id: "{name}",
+            placeholder: "{placeholder}",
+            required: true,
+        }
+    }
+}
+
+/// Modal form shared by the dialogs, `on_submit` receives the submitted fields.
+#[component]
+fn DialogForm(
+    title: String,
     open: Signal<bool>,
+    error: Signal<String>,
+    on_submit: EventHandler<Rc<FormData>>,
+    children: Element,
 ) -> Element {
-    let mut error = use_signal(String::new);
     if !open() {
         return rsx! {};
     }
     rsx! {
         dialog { open: true,
             article {
-                header { h4 { "New Project" } }
+                header { h4 { "{title}" } }
                 form {
-                    onsubmit: move |evt| async move {
+                    onsubmit: move |evt| {
                         evt.prevent_default();
-                        let created = create_project(
-                            &form_value(&evt.data, "name"),
-                            &form_value(&evt.data, "path"),
-                            &form_value(&evt.data, "output"),
-                        )
-                        .await;
-                        match created {
-                            Ok(created) => {
-                                current.set(created.id);
-                                projects.restart();
-                                error.set(String::new());
-                                open.set(false);
-                            }
-                            Err(message) => error.set(message),
-                        }
+                        on_submit.call(evt.data.clone());
                     },
-                    label { r#for: "name", "Name" }
-                    input {
-                        r#type: "text",
-                        name: "name",
-                        id: "name",
-                        placeholder: "InnoProjector",
-                        required: true,
-                    }
-                    label { r#for: "path", "Work directory" }
-                    input {
-                        r#type: "text",
-                        name: "path",
-                        id: "path",
-                        placeholder: "D:/InnoProjector",
-                        required: true,
-                    }
-                    label { r#for: "output", "Output directory" }
-                    input {
-                        r#type: "text",
-                        name: "output",
-                        id: "output",
-                        placeholder: "D:/InnoProjector/Package",
-                        required: true,
-                    }
+                    {children}
                     if !error().is_empty() {
                         small { style: "color: var(--pico-del-color)", "{error}" }
                     }
@@ -203,48 +188,128 @@ fn NewProjectDialog(
 }
 
 #[component]
-fn Form(
+fn NewProjectDialog(
+    projects: Resource<Vec<project::Project>>,
+    current: Signal<i32>,
+    open: Signal<bool>,
+) -> Element {
+    let mut error = use_signal(String::new);
+    rsx! {
+        DialogForm {
+            title: "New Project",
+            open,
+            error,
+            on_submit: move |data: Rc<FormData>| {
+                spawn(async move {
+                    let created = create_project(
+                        &form_value(&data, "name"),
+                        &form_value(&data, "path"),
+                        &form_value(&data, "output"),
+                    )
+                    .await;
+                    match created {
+                        Ok(created) => {
+                            current.set(created.id);
+                            projects.restart();
+                            error.set(String::new());
+                            open.set(false);
+                        }
+                        Err(message) => error.set(message),
+                    }
+                });
+            },
+            Field { name: "name", label: "Name", placeholder: "InnoProjector" }
+            Field { name: "path", label: "Work directory", placeholder: "D:/InnoProjector" }
+            Field {
+                name: "output",
+                label: "Output directory",
+                placeholder: "D:/InnoProjector/Package",
+            }
+        }
+    }
+}
+
+#[component]
+fn Recipes(
+    current: Signal<i32>,
     page: Signal<i32>,
     resource: Resource<Result<(Vec<task::Task>, i32), reqwest::Error>>,
-    current: Signal<i32>,
+    new_recipe: Signal<bool>,
 ) -> Element {
     let info = use_resource(move || async move {
-        reqwest::Client::new()
-            .get(format!("{}/project/{}", origin(), current()))
-            .send()
-            .await
-            .unwrap()
-            .json::<(project::Project, Vec<String>)>()
-            .await
-            .unwrap_or_default()
+        get_json::<project::ProjectInfo>(format!("/project/{}", current())).await
     });
     let (_, recipes) = info().unwrap_or_default();
     rsx! {
-        form {
-            class: "grid",
-            onsubmit: move |evt| async move {
-                evt.prevent_default();
-                submit_form(&evt.data, current()).await.unwrap();
-                page.set(1);
-                resource.restart();
-            },
-            fieldset { role: "group", class: "gc1-4",
-                input {
-                    r#type: "text",
-                    name: "task",
-                    id: "task",
-                    value: "",
-                    list: "task-list",
-                }
-                datalist { id: "task-list",
-                    for (index , recipe) in recipes.iter().enumerate() {
-                        option { id: index, value: "{recipe}" }
+        nav { class: "recipes",
+            ul {
+                for recipe in recipes.iter() {
+                    li { key: "{recipe.id}",
+                        button {
+                            class: "outline",
+                            onclick: {
+                                let recipe = recipe.clone();
+                                move |_| {
+                                    let recipe = recipe.clone();
+                                    async move {
+                                        run_recipe(&recipe, current()).await;
+                                        page.set(1);
+                                        resource.restart();
+                                    }
+                                }
+                            },
+                            "{recipe.name}"
+                        }
                     }
                 }
-                input { r#type: "submit", value: "Run Task" }
+            }
+            ul {
+                li {
+                    button {
+                        class: "outline new-button",
+                        onclick: move |_| new_recipe.set(true),
+                        "+ New Recipe"
+                    }
+                }
             }
         }
-        hr {}
+        NewRecipeDialog { current, open: new_recipe, info }
+    }
+}
+
+#[component]
+fn NewRecipeDialog(
+    current: Signal<i32>,
+    open: Signal<bool>,
+    info: Resource<project::ProjectInfo>,
+) -> Element {
+    let mut error = use_signal(String::new);
+    rsx! {
+        DialogForm {
+            title: "New Recipe",
+            open,
+            error,
+            on_submit: move |data: Rc<FormData>| {
+                spawn(async move {
+                    let created = create_recipe(
+                        current(),
+                        &form_value(&data, "name"),
+                        &form_value(&data, "command"),
+                    )
+                    .await;
+                    match created {
+                        Ok(_) => {
+                            error.set(String::new());
+                            open.set(false);
+                            info.restart();
+                        }
+                        Err(message) => error.set(message),
+                    }
+                });
+            },
+            Field { name: "name", label: "Name", placeholder: "update" }
+            Field { name: "command", label: "Command", placeholder: "zip flir" }
+        }
     }
 }
 
@@ -381,21 +446,39 @@ fn origin() -> String {
     window().unwrap().location().origin().unwrap()
 }
 
-async fn fetch_projects() -> Vec<project::Project> {
+/// GET a path on the server, falling back to the default value on any error.
+async fn get_json<T: DeserializeOwned + Default>(path: impl Into<String>) -> T {
     reqwest::Client::new()
-        .get(format!("{}/projects", origin()))
+        .get(format!("{}{}", origin(), path.into()))
         .send()
         .await
         .unwrap()
-        .json::<Vec<project::Project>>()
+        .json::<T>()
         .await
         .unwrap_or_default()
 }
 
 async fn create_project(name: &str, path: &str, output: &str) -> Result<project::Project, String> {
+    post_json(
+        "/projects",
+        json!({ "name": name, "path": path, "output": output }),
+    )
+    .await
+}
+
+async fn create_recipe(project: i32, name: &str, command: &str) -> Result<recipe::Recipe, String> {
+    post_json(
+        "/recipes",
+        json!({ "project": project, "name": name, "command": command }),
+    )
+    .await
+}
+
+/// POST a JSON body and return the created item, or the error message of the server.
+async fn post_json<T: DeserializeOwned>(path: &str, body: serde_json::Value) -> Result<T, String> {
     let response = reqwest::Client::new()
-        .post(format!("{}/projects", origin()))
-        .json(&json!({ "name": name, "path": path, "output": output }))
+        .post(format!("{}{path}", origin()))
+        .json(&body)
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -417,22 +500,16 @@ fn form_value(data: &FormData, key: &str) -> String {
         .unwrap_or_default()
 }
 
-async fn submit_form(data: &FormData, project: i32) -> Result<(), reqwest::Error> {
-    let task = form_value(data, "task");
-    let name = task.split(' ').next().unwrap_or_default();
-
-    let _res = reqwest::Client::new()
+async fn run_recipe(recipe: &recipe::Recipe, project: i32) {
+    let _ = reqwest::Client::new()
         .post(format!("{}/run", origin()))
         .json(&json!({
-           "name": name,
-           "command": task,
-           "project": (project > 0).then_some(project),
+            "name": recipe.name,
+            "command": recipe.command,
+            "project": project,
         }))
         .send()
-        .await?
-        .text()
-        .await?;
-    Ok(())
+        .await;
 }
 
 async fn connect_sse(mut task_updates: Signal<HashMap<i32, String>>) {

@@ -15,6 +15,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod db;
 mod project;
+mod recipe;
 mod service;
 mod task;
 use service::*;
@@ -87,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
     let mut router = Router::new()
         .route("/projects", get(list_projects).post(add_project))
         .route("/project/{id}", get(get_project))
-        .route("/menu", get(get_menu))
+        .route("/recipes", post(add_recipe))
         .route("/run", post(add_task))
         .route("/cancel/{id}", post(cancel_task))
         .route("/reset/{id}", post(reset_task))

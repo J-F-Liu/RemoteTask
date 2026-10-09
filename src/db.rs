@@ -1,4 +1,4 @@
-use crate::{project, task};
+use crate::{project, recipe, task};
 use sea_orm::{ConnectionTrait, DbConn, DbErr, EntityTrait, PaginatorTrait, Schema, Statement};
 use std::path::Path;
 
@@ -6,6 +6,7 @@ use std::path::Path;
 pub async fn migrate(db: &DbConn, work_dir: &Path, output_dir: &Path) -> Result<(), DbErr> {
     create_table::<task::Entity>(db).await?;
     create_table::<project::Entity>(db).await?;
+    create_table::<recipe::Entity>(db).await?;
     add_column_if_missing(db, "task", "dir", "TEXT", "''").await?;
     add_column_if_missing(db, "task", "project_id", "INTEGER", "0").await?;
     seed_project(db, work_dir, output_dir).await

@@ -4,12 +4,13 @@ A simple web server that serve APIs to run [just](https://github.com/casey/just)
 
 Every project has a work directory with a `justfile` and an output directory for the
 built packages. `WORK_DIR` and `OUTPUT_DIR` from `.env` are only used to create the
-first project on startup, further projects are managed on the web page.
+first project on startup, projects and their recipes are managed on the web page.
+A recipe is a name and the command that is passed to `just` in the project directory.
 
 - `GET /projects` - List projects
 - `POST /projects` - Create a project with `name`, `path` and `output`
-- `GET /project/{id}` - Get a project and its available recipes
-- `GET /menu` - Get the recipes of the work directory from `.env`
+- `GET /project/{id}` - Get a project and its recipes
+- `POST /recipes` - Create a recipe, or update it when `project` and `name` already exist
 - `POST /run` - Shedule a new task, the optional `project` field selects the project
 - `POST /reset/{id}` - Reset task status so it will be run again
 - `POST /canel/{id}` - Delete a task from shedule
@@ -32,7 +33,7 @@ An example web page is created for demonstration.
 2. Edit `.env` file to set environment variables
 3. Inside the project directory create a `justfile` and define your tasks
 4. Start the server
-5. Create projects on the web page, each project runs its tasks in its own directory
+5. Create projects and their recipes on the web page, tasks run in the project directory
 6. Use [xh](https://github.com/ducaale/xh) or VSCode REST client to call the APIs.
 7. Generate a token for authentication
    - `remote-task generate-token <username> <days>`

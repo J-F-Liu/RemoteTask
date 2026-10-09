@@ -1,4 +1,4 @@
-use crate::{project, task};
+use crate::{project, recipe, task};
 use axum::{
     Json,
     extract::{Path, Query, Request, State},
@@ -49,6 +49,16 @@ pub struct AppState {
 
 fn internal_error(err: impl std::fmt::Display) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+}
+
+/// Trim the value and reject the request when it is empty.
+fn required(value: &str, field: &str) -> Result<String, ApiError> {
+    let value = value.trim();
+    if value.is_empty() {
+        Err((StatusCode::BAD_REQUEST, format!("{field} is required")))
+    } else {
+        Ok(value.to_string())
+    }
 }
 
 async fn find_project(state: &AppState, id: i32) -> Result<project::Model, ApiError> {
@@ -263,13 +273,15 @@ pub async fn list_task(
     Ok(Json((tasks, pages)))
 }
 
-/// Get a project together with the recipes of its justfile.
+/// Get a project together with its recipes.
 pub async fn get_project(
     state: State<AppState>,
     Path(id): Path<i32>,
-) -> Result<Json<(project::Model, Vec<String>)>, ApiError> {
+) -> Result<Json<(project::Model, Vec<recipe::Model>)>, ApiError> {
     let project = find_project(&state, id).await?;
-    let recipes = list_recipes(std::path::Path::new(&project.path)).await?;
+    let recipes = recipe::list(&state.conn, project.id)
+        .await
+        .map_err(internal_error)?;
     Ok(Json((project, recipes)))
 }
 
@@ -292,14 +304,8 @@ pub async fn add_project(
     state: State<AppState>,
     Json(payload): Json<ProjectRequest>,
 ) -> Result<Json<project::Model>, ApiError> {
-    let name = payload.name.trim().to_string();
-    let path = payload.path.trim().to_string();
-    if name.is_empty() || path.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "name and path are required".to_string(),
-        ));
-    }
+    let name = required(&payload.name, "name")?;
+    let path = required(&payload.path, "path")?;
     if !std::path::Path::new(&path).is_dir() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -326,31 +332,24 @@ pub async fn add_project(
         .map_err(internal_error)
 }
 
-/// List the recipes of the work directory configured on startup.
-pub async fn get_menu(state: State<AppState>) -> Result<Json<Vec<String>>, ApiError> {
-    Ok(Json(list_recipes(&state.work_dir).await?))
+#[derive(Deserialize)]
+pub struct RecipeRequest {
+    pub project: i32,
+    pub name: String,
+    pub command: String,
 }
 
-async fn list_recipes(work_dir: &std::path::Path) -> Result<Vec<String>, ApiError> {
-    let dir = work_dir.to_path_buf();
-    let output = tokio::task::spawn_blocking(move || {
-        Command::new("just").current_dir(dir).arg("--list").output()
-    })
-    .await
-    .map_err(internal_error)?
-    .map_err(internal_error)?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .skip(1) // skip "Available recipes:"
-            .map(|line| line.trim().to_string())
-            .collect())
-    } else {
-        Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ))
-    }
+pub async fn add_recipe(
+    state: State<AppState>,
+    Json(payload): Json<RecipeRequest>,
+) -> Result<Json<recipe::Model>, ApiError> {
+    let name = required(&payload.name, "name")?;
+    let command = required(&payload.command, "command")?;
+    find_project(&state, payload.project).await?;
+    recipe::upsert(&state.conn, payload.project, name, command)
+        .await
+        .map(Json)
+        .map_err(internal_error)
 }
 
 pub async fn run_just_task(

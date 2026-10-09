@@ -15,14 +15,21 @@ Content-Type: application/json
 GET http://127.0.0.1:5678/project/1
 
 ###
-GET http://127.0.0.1:5678/menu
+POST http://127.0.0.1:5678/recipes
+Content-Type: application/json
+
+{
+    "project": 1,
+    "name": "update",
+    "command": "update"
+}
 
 ###
 POST http://127.0.0.1:5678/run
 Content-Type: application/json
 
 {
-    "name": "test",
+    "name": "update",
     "command": "update",
     "project": 1
 }
