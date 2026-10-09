@@ -4,6 +4,7 @@ webpage:
     cd webpage && dx bundle --release --platform web
     -rm public/index.html
     -rm public/assets/*
+    -rm webpage/target/dx/webpage/release/web/public/*
     cp -r webpage/target/dx/webpage/release/web/public/* public
 
 run args='':

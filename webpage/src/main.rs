@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 use std::collections::HashMap;
 use std::rc::Rc;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 use web_sys::window;
 
 const PICO_CSS: Asset = asset!("/assets/pico.min.css");
@@ -40,7 +40,7 @@ fn Head() -> Element {
 #[component]
 fn Main() -> Element {
     let page = use_signal(|| 1);
-    let mut current = use_signal(|| 0i32);
+    let current = use_signal(|| query_project().unwrap_or(0));
     let new_project = use_signal(|| false);
     let new_recipe = use_signal(|| false);
     let task_updates = use_signal(HashMap::<i32, String>::new);
@@ -48,11 +48,12 @@ fn Main() -> Element {
     let projects =
         use_resource(move || async move { get_json::<Vec<project::Project>>("/projects").await });
 
-    // Select the first project once the list is loaded
+    // Fall back to the first project when the URL points to an unknown one
     use_effect(move || {
-        if current() == 0 {
-            if let Some(id) = projects().and_then(|list| list.first().map(|p| p.id)) {
-                current.set(id);
+        let Some(list) = projects() else { return };
+        if !list.iter().any(|project| project.id == current()) {
+            if let Some(id) = list.first().map(|project| project.id) {
+                select_project(current, id);
             }
         }
     });
@@ -107,7 +108,7 @@ fn ProjectTabs(
                             onclick: {
                                 let id = project.id;
                                 move |_| {
-                                    current.set(id);
+                                    select_project(current, id);
                                     page.set(1);
                                 }
                             },
@@ -209,7 +210,7 @@ fn NewProjectDialog(
                     .await;
                     match created {
                         Ok(created) => {
-                            current.set(created.id);
+                            select_project(current, created.id);
                             projects.restart();
                             error.set(String::new());
                             open.set(false);
@@ -444,6 +445,25 @@ fn List(
 
 fn origin() -> String {
     window().unwrap().location().origin().unwrap()
+}
+
+/// Project id from the `?project=` query string of the address bar.
+fn query_project() -> Option<i32> {
+    let search = window()?.location().search().ok()?;
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("project="))
+        .and_then(|value| value.parse().ok())
+}
+
+/// Select a project and mirror it in the address bar, so a refresh keeps it.
+fn select_project(mut current: Signal<i32>, id: i32) {
+    current.set(id);
+    if let Some(history) = window().and_then(|window| window.history().ok()) {
+        let url = format!("?project={id}");
+        let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
+    }
 }
 
 /// GET a path on the server, falling back to the default value on any error.
