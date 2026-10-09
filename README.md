@@ -2,11 +2,18 @@
 
 A simple web server that serve APIs to run [just](https://github.com/casey/just) tasks remotely.
 
-- `GET /menu` - Get available recipes
-- `POST /run` - Shedule a new task
+Every project has a work directory with a `justfile` and an output directory for the
+built packages. `WORK_DIR` and `OUTPUT_DIR` from `.env` are only used to create the
+first project on startup, further projects are managed on the web page.
+
+- `GET /projects` - List projects
+- `POST /projects` - Create a project with `name`, `path` and `output`
+- `GET /project/{id}` - Get a project and its available recipes
+- `GET /menu` - Get the recipes of the work directory from `.env`
+- `POST /run` - Shedule a new task, the optional `project` field selects the project
 - `POST /reset/{id}` - Reset task status so it will be run again
 - `POST /canel/{id}` - Delete a task from shedule
-- `GET /list/{page}` - Get a list of recent tasks
+- `GET /list/{page}?project={id}` - Get a list of recent tasks of a project
 
 See `test.rest` for how to use the APIs.
 
@@ -23,10 +30,11 @@ An example web page is created for demonstration.
 ### How to use
 1. Install [just](https://github.com/casey/just)
 2. Edit `.env` file to set environment variables
-3. Inside `WORK_DIR` create a `justfile` and define your tasks
+3. Inside the project directory create a `justfile` and define your tasks
 4. Start the server
-5. Use [xh](https://github.com/ducaale/xh) or VSCode REST client to call the APIs.
-6. Generate a token for authentication
+5. Create projects on the web page, each project runs its tasks in its own directory
+6. Use [xh](https://github.com/ducaale/xh) or VSCode REST client to call the APIs.
+7. Generate a token for authentication
    - `remote-task generate-token <username> <days>`
    - The token will be written to `token.txt`
 

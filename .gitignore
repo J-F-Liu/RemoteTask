@@ -3,3 +3,4 @@ bundle
 public
 *.db
 *.log
+.agent/

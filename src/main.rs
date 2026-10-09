@@ -6,51 +6,50 @@ use axum::{
     routing::{get, post},
 };
 use sea_orm::Database;
-use std::{env, sync::{Arc, RwLock}};
+use std::env;
 use tokio::sync::broadcast;
 use tower::ServiceBuilder;
 use tower_http::{ServiceBuilderExt, services::ServeDir};
 use tracing::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod db;
+mod project;
 mod service;
 mod task;
 use service::*;
-
-const PATH_LIST_SEP: char = if cfg!(target_os = "windows") { ';' } else { ':' };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     // CLI: generate token and exit
     let mut args = std::env::args();
-    if let Some(_) = args.next() {
-        if let Some(cmd) = args.next() {
-            if cmd == "generate-token" || cmd == "--generate-token" {
-                let user = args.next().unwrap_or_else(|| "user".to_string());
-                let days = args
-                    .next()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(90);
-                generate_token(user, days);
-                return Ok(());
-            }
-        }
+    if args.next().is_some()
+        && let Some(cmd) = args.next()
+        && (cmd == "generate-token" || cmd == "--generate-token")
+    {
+        let user = args.next().unwrap_or_else(|| "user".to_string());
+        let days = args
+            .next()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(90);
+        generate_token(user, days);
+        return Ok(());
     }
     let db_url = env::var("DATABASE_URL").unwrap_or("sqlite:./tasks.db?mode=rwc".to_string());
     let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
     let port = env::var("PORT").unwrap_or("5678".to_string());
     let secret = env::var("APP_SECRET").unwrap_or("".to_string());
-    let work_dir_env = env::var("WORK_DIR").unwrap_or("".to_string());
-    let work_dirs: Vec<std::path::PathBuf> = work_dir_env
-        .split(PATH_LIST_SEP)
-        .filter(|s| !s.is_empty())
-        .map(|s| std::path::PathBuf::from(s))
-        .collect();
-    let work_dir = work_dirs.first().cloned().unwrap_or_else(|| env::current_dir().unwrap());
+    let work_dir = env::var("WORK_DIR")
+        .ok()
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| env::current_dir().unwrap());
     let output_dir = env::var("OUTPUT_DIR")
-        .map(|dir| std::path::PathBuf::from(dir))
-        .unwrap_or(work_dir.clone());
+        .ok()
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| work_dir.clone());
     let logs_dir = work_dir.join("logs");
     let server_url = format!("{host}:{port}");
 
@@ -67,28 +66,28 @@ async fn main() -> anyhow::Result<()> {
     let conn = Database::connect(db_url)
         .await
         .expect("Database connection failed");
-    task::create_table_if_not_exists(&conn)
+    db::migrate(&conn, &work_dir, &output_dir)
         .await
-        .expect("Failed to create table");
+        .expect("Database migration failed");
 
     let (sender, _) = broadcast::channel(10);
     let (shutdown_tx, _) = broadcast::channel(10);
     let state = AppState {
         conn,
-        work_dir: Arc::new(RwLock::new(work_dir.clone())),
-        work_dirs,
+        work_dir,
+        output_dir: output_dir.clone(),
         logs_dir: logs_dir.clone(),
         sender: sender.clone(),
         shutdown_tx: shutdown_tx.clone(),
     };
 
-    let runner = start_runner(state.clone(), output_dir.clone());
+    let runner = start_runner(state.clone());
 
     // build our application with some routes
     let mut router = Router::new()
-        .route("/change_dir", get(change_dir))
-        .route("/get_dir", get(get_dir))
-        .route("/menu", get(get_available))
+        .route("/projects", get(list_projects).post(add_project))
+        .route("/project/{id}", get(get_project))
+        .route("/menu", get(get_menu))
         .route("/run", post(add_task))
         .route("/cancel/{id}", post(cancel_task))
         .route("/reset/{id}", post(reset_task))
@@ -108,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .service(ServeDir::new(logs_dir)),
         )
-        .nest_service("/package", ServeDir::new(output_dir))
+        .nest_service("/package", ServeDir::new(&output_dir))
         .fallback_service(ServeDir::new("public").precompressed_br());
 
     // run it

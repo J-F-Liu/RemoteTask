@@ -1,4 +1,20 @@
 ###
+GET http://127.0.0.1:5678/projects
+
+###
+POST http://127.0.0.1:5678/projects
+Content-Type: application/json
+
+{
+    "name": "InnoProjector",
+    "path": "D:/InnoProjector",
+    "output": "D:/InnoProjector/Package"
+}
+
+###
+GET http://127.0.0.1:5678/project/1
+
+###
 GET http://127.0.0.1:5678/menu
 
 ###
@@ -7,7 +23,8 @@ Content-Type: application/json
 
 {
     "name": "test",
-    "command": "update"
+    "command": "update",
+    "project": 1
 }
 
 ###
@@ -17,7 +34,8 @@ Content-Type: application/json
 {
     "name": "test",
     "command": "zip flir",
-    "output": "Package/InnoProjector-flir-20250408.zip"
+    "output": "Package/InnoProjector-flir-20250408.zip",
+    "project": 1
 }
 
 ###
@@ -27,7 +45,7 @@ POST http://127.0.0.1:5678/reset/37
 POST http://127.0.0.1:5678/cancel/27
 
 ###
-GET http://127.0.0.1:5678/list/1
+GET http://127.0.0.1:5678/list/1?project=1
 
 ###
 GET http://127.0.0.1:5678/status

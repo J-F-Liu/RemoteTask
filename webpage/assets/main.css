@@ -37,6 +37,50 @@ button.secondary {
     padding: 2px 20px;
 }
 
+/* Project tabs */
+.tabs {
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+.tabs ul {
+    flex-wrap: wrap;
+}
+
+.tabs li {
+    padding: 0;
+}
+
+.tabs button.tab {
+    margin: 0;
+    padding: 0.4rem 1rem;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background-color: transparent;
+    box-shadow: none;
+    color: var(--pico-muted-color);
+    font-weight: 600;
+}
+
+.tabs button.tab:hover,
+.tabs button.tab.active {
+    background-color: transparent;
+    color: var(--pico-primary);
+    border-bottom-color: var(--pico-primary);
+}
+
+/* Dialog actions */
+dialog form footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--pico-spacing);
+    margin-top: var(--pico-spacing);
+}
+
+dialog form footer > * {
+    margin-bottom: 0;
+}
+
 :root,
 :host {
     --pico-spacing: 0.5rem;

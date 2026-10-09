@@ -1,4 +1,6 @@
-use sea_orm::{DbConn, QueryOrder, Set, TryIntoModel, Unchanged, entity::prelude::*};
+use sea_orm::{
+    DbConn, QueryOrder, Set, TryIntoModel, Unchanged, entity::prelude::*, sea_query::Expr,
+};
 use serde::Serialize;
 
 #[derive(Clone, Debug, DeriveEntityModel, Serialize)]
@@ -10,6 +12,7 @@ pub struct Model {
     pub dir: String,
     pub command: String,
     pub output: Option<String>,
+    pub project_id: i32,
     pub status: TaskStatus,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
@@ -43,53 +46,13 @@ impl Model {
     }
 }
 
-pub async fn add_column_if_missing(db: &DbConn, table_name: &str, column_name: &str, column_type: &str, column_default: &str) -> Result<(), DbErr> {
-    let backend = db.get_database_backend();
-    let column_exists: bool = match backend {
-        sea_orm::DatabaseBackend::Sqlite => {
-            let sql = sea_orm::Statement::from_sql_and_values(
-                backend,
-                format!("PRAGMA table_info({table_name})"),
-                vec![],
-            );
-            let result = db.query_all(sql).await?;
-
-            result.iter().find(|r| {
-                r.try_get::<String>("", "name") == Ok(column_name.to_string())
-            }).is_some()
-        }
-        _ => unreachable!(),
-    };
-    if !column_exists {
-        let sql = sea_orm::Statement::from_sql_and_values(
-            backend,
-            format!("ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} NOT NULL DEFAULT {column_default}"),
-            vec![],
-        );
-        db.execute(sql).await?;
-    }
-    Ok(())
-}
-
-pub async fn create_table_if_not_exists(db: &DbConn) -> Result<(), DbErr> {
-    let backend = db.get_database_backend();
-    let schema = sea_orm::Schema::new(backend);
-    let mut statement = schema.create_table_from_entity(Entity);
-    let statement = backend.build(statement.if_not_exists());
-    db.execute(statement).await?;
-
-    // Check for necessary migrations.
-    add_column_if_missing(db, "task", "dir", "TEXT", "''").await?;
-
-    Ok(())
-}
-
 pub async fn create_task(
     db: &DbConn,
     dir: String,
     name: String,
     command: String,
     output: Option<String>,
+    project_id: i32,
 ) -> Result<Model, DbErr> {
     let now = TimeDateTimeWithTimeZone::now_utc();
     ActiveModel {
@@ -97,6 +60,7 @@ pub async fn create_task(
         dir: Set(dir),
         command: Set(command),
         output: Set(output),
+        project_id: Set(project_id),
         status: Set(TaskStatus::Pending),
         created_at: Set(now),
         updated_at: Set(now),
@@ -142,11 +106,24 @@ pub async fn recent_tasks(
     db: &DbConn,
     page_size: u64,
     page: u64,
+    project: Option<i32>,
 ) -> Result<(Vec<Model>, u64), DbErr> {
-    let paginator = Entity::find()
-        .order_by_desc(Column::Id)
-        .paginate(db, page_size);
+    let mut query = Entity::find();
+    if let Some(project) = project {
+        query = query.filter(Column::ProjectId.eq(project));
+    }
+    let paginator = query.order_by_desc(Column::Id).paginate(db, page_size);
     let pages = paginator.num_pages().await?;
     let items = paginator.fetch_page(page).await?;
     Ok((items, pages))
+}
+
+/// Move tasks that don't belong to any project yet to the given project.
+pub async fn assign_unassigned(db: &DbConn, project_id: i32) -> Result<(), DbErr> {
+    Entity::update_many()
+        .col_expr(Column::ProjectId, Expr::value(project_id))
+        .filter(Column::ProjectId.eq(0))
+        .exec(db)
+        .await
+        .map(|_| ())
 }

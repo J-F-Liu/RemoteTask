@@ -1,28 +1,29 @@
-use crate::task;
+use crate::{project, task};
 use axum::{
     Json,
-    extract::{Path, Request, State, Query},
+    extract::{Path, Query, Request, State},
     http::StatusCode,
     middleware::Next,
     response::{
-        IntoResponse, Redirect, sse::{Event, Sse}
+        IntoResponse,
+        sse::{Event, Sse},
     },
 };
 use axum_extra::extract::CookieJar;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt as TokioStreamExt;
-use tracing::{error, info};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
+use tracing::{error, info};
+
+pub type ApiError = (StatusCode, String);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaskStatusEvent {
@@ -39,27 +40,32 @@ static RUNNING: AtomicBool = AtomicBool::new(true);
 #[derive(Clone)]
 pub struct AppState {
     pub conn: DatabaseConnection,
-    pub work_dir: Arc<RwLock<PathBuf>>,
-    pub work_dirs: Vec<PathBuf>,
+    pub work_dir: PathBuf,
+    pub output_dir: PathBuf,
     pub logs_dir: PathBuf,
     pub sender: broadcast::Sender<TaskStatusEvent>,
     pub shutdown_tx: broadcast::Sender<ShutdownSignal>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DirInfo {
-    pub current: String,
-    pub all_dirs: Vec<String>,
+fn internal_error(err: impl std::fmt::Display) -> ApiError {
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
 
-pub fn start_runner(state: AppState, output_dir: std::path::PathBuf) -> JoinHandle<()> {
+async fn find_project(state: &AppState, id: i32) -> Result<project::Model, ApiError> {
+    project::find(&state.conn, id)
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Project {id} not found")))
+}
+
+pub fn start_runner(state: AppState) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
         loop {
             if !RUNNING.load(Ordering::SeqCst) {
                 break;
             }
-            if let Err(err) = run_tasks(&state, &output_dir).await {
+            if let Err(err) = run_tasks(&state).await {
                 error!("Failed to run tasks: {}", err);
             }
             interval.tick().await;
@@ -97,10 +103,7 @@ pub async fn shutdown_signal(
     info!("SSE connections closed");
 }
 
-pub async fn run_tasks(
-    state: &AppState,
-    output_dir: &std::path::Path,
-) -> Result<(), sea_orm::DbErr> {
+pub async fn run_tasks(state: &AppState) -> Result<(), sea_orm::DbErr> {
     let tasks = task::pending_tasks(&state.conn).await?;
     for task in tasks {
         info!("Running task: {}", task.id);
@@ -111,16 +114,12 @@ pub async fn run_tasks(
                 .unwrap_or_else(|err| error!("Failed to create log directory: {}", err));
         }
         let log_file = log_dir.join(format!("{}.log", task.id));
+        let (work_dir, output_dir) = match project::find(&state.conn, task.project_id).await? {
+            Some(project) => (PathBuf::from(project.path), PathBuf::from(project.output)),
+            None => (state.work_dir.clone(), state.output_dir.clone()),
+        };
         let output_file = task.output.map(|path| output_dir.join(path));
-        let work_dir = state.work_dir.read().unwrap().clone();
-        match run_just_task(
-            &task.command,
-            &work_dir,
-            &log_file,
-            output_file.as_ref(),
-        )
-        .await
-        {
+        match run_just_task(&task.command, &work_dir, &log_file, output_file.as_ref()).await {
             Ok(_) => {
                 info!("Task {} completed successfully", task.id);
                 update_task(state, task.id, task::TaskStatus::Success).await?;
@@ -134,41 +133,54 @@ pub async fn run_tasks(
     Ok(())
 }
 
+#[derive(Deserialize)]
+pub struct RunRequest {
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub output: Option<String>,
+    #[serde(default)]
+    pub project: Option<i32>,
+}
+
 pub async fn add_task(
     state: State<AppState>,
-    Json(mut payload): Json<HashMap<String, String>>,
-) -> Result<Json<task::Model>, (StatusCode, String)> {
-    let name = payload
-        .remove("name")
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "name is required".to_string()))?;
-    let command = payload
-        .remove("command")
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "command is required".to_string()))?;
-    let output = payload.remove("output");
-    let work_dir = state.work_dir.read().unwrap().to_str().unwrap().to_string().clone();
-    let task = task::create_task(&state.conn, work_dir, name, command, output)
-        .await
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Json(payload): Json<RunRequest>,
+) -> Result<Json<task::Model>, ApiError> {
+    let (project_id, dir) = match payload.project {
+        Some(id) => {
+            let project = find_project(&state, id).await?;
+            (project.id, project.path)
+        }
+        None => (0, state.work_dir.to_string_lossy().into_owned()),
+    };
+    let task = task::create_task(
+        &state.conn,
+        dir,
+        payload.name,
+        payload.command,
+        payload.output,
+        project_id,
+    )
+    .await
+    .map_err(internal_error)?;
     Ok(Json(task))
 }
 
-pub async fn cancel_task(
-    state: State<AppState>,
-    Path(id): Path<i32>,
-) -> Result<String, (StatusCode, String)> {
+pub async fn cancel_task(state: State<AppState>, Path(id): Path<i32>) -> Result<String, ApiError> {
     task::delete_task(&state.conn, id)
         .await
         .map(|value| value.to_string())
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+        .map_err(internal_error)
 }
 
 pub async fn reset_task(
     state: State<AppState>,
     Path(id): Path<i32>,
-) -> Result<Json<task::Model>, (StatusCode, String)> {
+) -> Result<Json<task::Model>, ApiError> {
     let task = update_task(&state, id, task::TaskStatus::Pending)
         .await
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+        .map_err(internal_error)?;
     Ok(Json(task))
 }
 
@@ -228,77 +240,117 @@ pub async fn task_status_sse(
     Sse::new(combined)
 }
 
+#[derive(Deserialize)]
+pub struct ListQuery {
+    #[serde(default)]
+    pub project: Option<i32>,
+}
+
 pub async fn list_task(
     state: State<AppState>,
     Path(page): Path<u64>,
-) -> Result<Json<(Vec<task::Model>, u64)>, (StatusCode, String)> {
+    Query(query): Query<ListQuery>,
+) -> Result<Json<(Vec<task::Model>, u64)>, ApiError> {
     if page == 0 {
         return Err((
             StatusCode::BAD_REQUEST,
             "Page number must be greater than 0".to_string(),
         ));
     }
-    let (tasks, pages) = task::recent_tasks(&state.conn, 10, page - 1)
+    let (tasks, pages) = task::recent_tasks(&state.conn, 10, page - 1, query.project)
         .await
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+        .map_err(internal_error)?;
     Ok(Json((tasks, pages)))
 }
 
-pub async fn get_available(
+/// Get a project together with the recipes of its justfile.
+pub async fn get_project(
     state: State<AppState>,
-) -> Result<Json<Vec<String>>, (StatusCode, String)> {
-    let work_dir = state.work_dir.clone();
+    Path(id): Path<i32>,
+) -> Result<Json<(project::Model, Vec<String>)>, ApiError> {
+    let project = find_project(&state, id).await?;
+    let recipes = list_recipes(std::path::Path::new(&project.path)).await?;
+    Ok(Json((project, recipes)))
+}
+
+pub async fn list_projects(state: State<AppState>) -> Result<Json<Vec<project::Model>>, ApiError> {
+    project::list(&state.conn)
+        .await
+        .map(Json)
+        .map_err(internal_error)
+}
+
+#[derive(Deserialize)]
+pub struct ProjectRequest {
+    pub name: String,
+    pub path: String,
+    #[serde(default)]
+    pub output: String,
+}
+
+pub async fn add_project(
+    state: State<AppState>,
+    Json(payload): Json<ProjectRequest>,
+) -> Result<Json<project::Model>, ApiError> {
+    let name = payload.name.trim().to_string();
+    let path = payload.path.trim().to_string();
+    if name.is_empty() || path.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "name and path are required".to_string(),
+        ));
+    }
+    if !std::path::Path::new(&path).is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("{path} is not a directory"),
+        ));
+    }
+    if project::find_by_name(&state.conn, &name)
+        .await
+        .map_err(internal_error)?
+        .is_some()
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Project {name} already exists"),
+        ));
+    }
+    let output = match payload.output.trim() {
+        "" => path.clone(),
+        output => output.to_string(),
+    };
+    project::create(&state.conn, name, path, output)
+        .await
+        .map(Json)
+        .map_err(internal_error)
+}
+
+/// List the recipes of the work directory configured on startup.
+pub async fn get_menu(state: State<AppState>) -> Result<Json<Vec<String>>, ApiError> {
+    Ok(Json(list_recipes(&state.work_dir).await?))
+}
+
+async fn list_recipes(work_dir: &std::path::Path) -> Result<Vec<String>, ApiError> {
+    let dir = work_dir.to_path_buf();
     let output = tokio::task::spawn_blocking(move || {
-        let work_dir = work_dir.read().unwrap();
-        Command::new("just")
-            .current_dir(work_dir.as_path())
-            .arg("--list")
-            .output()
+        Command::new("just").current_dir(dir).arg("--list").output()
     })
     .await
-    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
-    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    .map_err(internal_error)?
+    .map_err(internal_error)?;
     if output.status.success() {
-        Ok(Json(
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .skip(1) // skip "Available recipes:"
-                .map(|line| line.trim().to_string())
-                .collect::<Vec<_>>(),
-        ))
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .skip(1) // skip "Available recipes:"
+            .map(|line| line.trim().to_string())
+            .collect())
     } else {
         Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             String::from_utf8_lossy(&output.stderr).to_string(),
         ))
     }
-}
-
-pub async fn get_dir(
-    state: State<AppState>,
-) -> Json<DirInfo> {
-    let current = state.work_dir.read().unwrap().to_str().unwrap().to_string();
-    let all_dirs = state.work_dirs.iter()
-        .map(|d| d.to_str().unwrap().to_string())
-        .collect::<Vec<_>>();
-    Json(DirInfo { current, all_dirs })
-}
-
-#[derive(Deserialize)]
-pub struct ChangeDirParam {
-    dir: String
-}
-
-pub async fn change_dir(
-    state: State<AppState>,
-    Query(param): Query<ChangeDirParam>
-) -> Redirect {
-    let dir = PathBuf::from(param.dir);
-    if state.work_dirs.contains(&dir) {
-        let mut w = state.work_dir.write().unwrap();
-        *w = dir;
-    }
-    Redirect::to("/")
 }
 
 pub async fn run_just_task(
@@ -335,7 +387,7 @@ pub async fn run_just_task(
                         output_file.display()
                     );
                     file.write_all(message.as_bytes())?;
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, message))
+                    Err(std::io::Error::other(message))
                 }
             } else {
                 Ok(())
@@ -346,11 +398,11 @@ pub async fn run_just_task(
                 None => "Command terminated by signal".to_owned(),
             };
             file.write_all(message.as_bytes())?;
-            Err(std::io::Error::new(std::io::ErrorKind::Other, message))
+            Err(std::io::Error::other(message))
         }
     })
     .await
-    .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "spawn_blocking failed"))?
+    .map_err(|_| std::io::Error::other("spawn_blocking failed"))?
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
